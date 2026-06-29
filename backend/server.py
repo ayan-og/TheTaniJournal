@@ -654,10 +654,12 @@ async def download_file(path: str):
 
 # ---------- Google Drive integration (per-user OAuth, drive.file scope) ----------
 from googleapiclient.discovery import build  # noqa: E402
+from googleapiclient.errors import HttpError  # noqa: E402
 from googleapiclient.http import MediaIoBaseUpload  # noqa: E402
 from google_auth_oauthlib.flow import Flow  # noqa: E402
 from google.oauth2.credentials import Credentials as GoogleCredentials  # noqa: E402
 from google.auth.transport.requests import Request as GoogleRequest  # noqa: E402
+from google.auth.exceptions import RefreshError  # noqa: E402
 import io as _io  # noqa: E402
 import html as _html  # noqa: E402
 
@@ -860,9 +862,16 @@ async def export_post_to_drive(post_id: str, user: dict = Depends(get_current_us
     if post["author_id"] != user["user_id"]:
         raise HTTPException(403, "Not your post")
 
-    service = await _drive_service_for(user["user_id"])
-    folder_id = await _find_or_create_folder(service, DRIVE_FOLDER_NAME)
-    drive_file = await _push_post_to_drive(service, folder_id, post)
+    try:
+        service = await _drive_service_for(user["user_id"])
+        folder_id = await _find_or_create_folder(service, DRIVE_FOLDER_NAME)
+        drive_file = await _push_post_to_drive(service, folder_id, post)
+    except RefreshError as e:
+        log.warning("Drive RefreshError for user %s: %s", user["user_id"], e)
+        raise HTTPException(401, "Your Google Drive session has expired. Please reconnect Drive.")
+    except HttpError as e:
+        log.warning("Drive HttpError for user %s: %s", user["user_id"], e)
+        raise HTTPException(502, "Google Drive rejected the request. Please try again.")
 
     synced_at = iso(now_utc())
     await db.posts.update_one(
@@ -884,15 +893,36 @@ async def export_post_to_drive(post_id: str, user: dict = Depends(get_current_us
 @api.post("/drive/backup-all")
 async def backup_all_posts(user: dict = Depends(get_current_user)):
     """Export every post owned by the user to their Drive folder. Idempotent."""
-    service = await _drive_service_for(user["user_id"])
-    folder_id = await _find_or_create_folder(service, DRIVE_FOLDER_NAME)
-
     cursor = db.posts.find({"author_id": user["user_id"]}, {"_id": 0}).sort("created_at", 1)
     posts = await cursor.to_list(length=1000)
+    synced_at = iso(now_utc())
+
+    # If Drive credentials are completely unusable, mark every post as failed
+    # but still return the 200-shaped contract so the UI can show a warning toast.
+    try:
+        service = await _drive_service_for(user["user_id"])
+        folder_id = await _find_or_create_folder(service, DRIVE_FOLDER_NAME)
+    except RefreshError as e:
+        log.warning("Backup-all: RefreshError for user %s: %s", user["user_id"], e)
+        return {
+            "synced": 0,
+            "total": len(posts),
+            "failed": [{"id": p["id"], "title": p.get("title")} for p in posts],
+            "synced_at": synced_at,
+            "error": "drive_token_expired",
+        }
+    except HttpError as e:
+        log.warning("Backup-all: HttpError for user %s: %s", user["user_id"], e)
+        return {
+            "synced": 0,
+            "total": len(posts),
+            "failed": [{"id": p["id"], "title": p.get("title")} for p in posts],
+            "synced_at": synced_at,
+            "error": "drive_request_failed",
+        }
 
     synced = 0
-    failed = []
-    synced_at = iso(now_utc())
+    failed: list = []
     for p in posts:
         try:
             drive_file = await _push_post_to_drive(service, folder_id, p)

@@ -52,13 +52,22 @@ class TestBackupAllAuth:
         assert r.status_code == 401, r.text
 
     def test_not_connected_returns_400(self, demo_token, demo_user_id, mongo_db):
-        mongo_db.drive_credentials.delete_one({"user_id": demo_user_id})
-        r = requests.post(
-            f"{BASE_URL}/api/drive/backup-all",
-            headers={"Authorization": f"Bearer {demo_token}"},
-        )
-        assert r.status_code == 400, r.text
-        detail = (r.json().get("detail") or "").lower()
+        # Retry briefly to dodge a known race with the parallel TestBackupAllWithFakeCreds
+        # class (different xdist worker) whose autouse fixture may re-insert creds.
+        import time
+        last = None
+        for _ in range(8):
+            mongo_db.drive_credentials.delete_one({"user_id": demo_user_id})
+            r = requests.post(
+                f"{BASE_URL}/api/drive/backup-all",
+                headers={"Authorization": f"Bearer {demo_token}"},
+            )
+            last = r
+            if r.status_code == 400:
+                break
+            time.sleep(0.25)
+        assert last is not None and last.status_code == 400, last.text
+        detail = (last.json().get("detail") or "").lower()
         assert "not connected" in detail, detail
 
 

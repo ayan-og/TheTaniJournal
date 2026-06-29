@@ -1,0 +1,37 @@
+{
+  "summary": "Phase 4 re-test after the critical fix. Backend: full pytest suite 49/49 PASS (sequential AND under pytest-xdist parallel; the race-resilient retry loop on TestBackupAllAuth::test_not_connected_returns_400 absorbs the autouse-fixture race with TestBackupAllWithFakeCreds). Both invalid-creds contracts independently verified via curl: POST /api/drive/backup-all -> 200 {synced:0,total:2,failed:[2],synced_at,error:'drive_token_expired'}; POST /api/posts/{id}/export-drive -> 401 {detail:'Your Google Drive session has expired. Please reconnect Drive.'}. Frontend: with fake creds seeded for the demo user, Dashboard 'Backup all to Drive' click produced the WARNING toast 'Backed up 0 of 2. 2 failed.' (NOT the previous 'Could not back up to Drive' error toast) and the network call returned 200 (NOT 500). PostView 'Re-sync to Drive' click produced 401 and the friendly toast 'Your Google Drive session has expired. Please reconnect Drive.' All 5 acceptance criteria for this retest met. DB cleaned up via cleanup_drive_creds.py.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_drive_backup_all.py",
+    "/app/backend/tests/test_drive_export.py",
+    "/app/backend/tests/test_tani_journal.py",
+    "/app/backend/tests/test_uploads_profile.py",
+    "/app/backend/tests/test_async_concurrency.py",
+    "/app/backend/tests/seed_fake_drive.py",
+    "/app/backend/tests/cleanup_drive_creds.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py /drive/backup-all: try/except now wraps _drive_service_for + _find_or_create_folder; on RefreshError/HttpError returns 200 with all-failed body + error code (drive_token_expired / drive_request_failed). Contract matches the spec.",
+    "server.py /posts/{id}/export-drive: try/except now wraps _drive_service_for + _find_or_create_folder + _push_post_to_drive; RefreshError -> 401 with friendly detail, HttpError -> 502. Good separation of token-expired vs Google-side errors.",
+    "(carry-over from iter_7, non-blocking) backup_all_posts() still does N sequential awaits of _push_post_to_drive. For users with many posts consider bounded asyncio.gather (e.g. semaphore=5). Not in scope of this fix.",
+    "(carry-over) _build_post_html escapes title but injects post['content'] raw; DOMPurify on the FE is the only sanitiser. Defense-in-depth nit, not a regression."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "49/49 (100%)", "frontend": "5/5 acceptance criteria (100%)"},
+  "test_credentials": "demo@tanijournal.com / Tani@2026 (user_id=user_ee063d86f797).",
+  "seed_data_creation": "Inserted fake drive_credentials for demo user (via /app/backend/tests/seed_fake_drive.py seed); patched post_dedfe9aab59d with drive_file_id=fake_drive_id + drive_synced_at=now; left post_0c37317ad5ff clean. ALL CLEANED UP at end-of-run via /app/backend/tests/cleanup_drive_creds.py (1 drive_credentials doc deleted, 1 post's drive_* fields unset).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 4 backup-to-Drive is fully green. To regress these contracts later: (1) python /app/backend/tests/seed_fake_drive.py seed, (2) login as demo on the FE, (3) click dashboard-backup-all-btn → expect 200 + warning toast 'Backed up 0 of N. N failed.', (4) open /post/<synced-id> → click post-export-drive-btn → expect 401 + reconnect toast, (5) python /app/backend/tests/cleanup_drive_creds.py to restore baseline. Always run cleanup before unrelated suites (test_drive_export::test_status_initial asserts connected=False).",
+  "rca_of_the_issue": "Previous iter_7 RCA: _drive_service_for() + _find_or_create_folder() in /drive/backup-all (and likewise /export-drive) ran OUTSIDE any try/except — google.auth.exceptions.RefreshError on the first Drive API call (files().list inside _find_or_create_folder_sync) bubbled to FastAPI and crashed the request as 500 with no JSON body. Fix (verified): both endpoints now wrap those calls in try/except RefreshError + HttpError. /backup-all returns 200 with the all-failed body shape preserving the spec contract; /export-drive raises HTTPException(401,'...reconnect Drive.') matching the friendly UX. Both branches confirmed via direct curl AND via the live FE click. No regression in 47 pre-existing tests."
+}
