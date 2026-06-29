@@ -1,0 +1,40 @@
+{
+  "summary": "Phase 3.5 verified end-to-end. Backend 44/44 pytest pass (regression clean). Frontend: Drive disconnect now opens AlertDialog with title 'Disconnect Google Drive?'; Keep-connected leaves drive credentials intact (GET /api/drive/status still connected:true); Disconnect calls DELETE /api/drive/disconnect, shows 'Google Drive disconnected' toast and connected flips to false. Editor renders editor-drive-sync-hint ('This entry will also be saved to your Google Drive on publish.') below the visibility toggle only when connected. Publish (POST /api/posts) and Edit (PUT /api/posts/{id}) both trigger POST /api/posts/{id}/export-drive fire-and-forget; the call returns 4xx with fake creds but publish flow still succeeds and navigates to /post/{id}. With Drive disconnected, no export-drive request is fired and the hint is absent. Drive 'connected' state simulated by inserting fake drive_credentials doc for demo user_id=user_ee063d86f797 — cleaned up after testing.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Navbar — Disconnect Drive flow",
+        "issues": [
+          "When 'Drive connected · disconnect' is selected the AlertDialog opens correctly, but the dropdown menu does NOT close — both the dialog and the dropdown remain visible simultaneously (see /app/.screenshots/disconnect_dialog.png). The original spec stated 'the dropdown should close and an AlertDialog should appear'. The Radix DropdownMenuItem onSelect uses e.preventDefault() which suppresses the auto-close. Recommend either removing e.preventDefault() (and opening the dialog via a setTimeout to let the dropdown unmount first) or explicitly calling document.body.click() / closing the dropdown via state before opening the dialog. Functionally everything still works because the dialog overlay blocks pointer events on the dropdown, but visually it's cluttered."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_drive_export.py",
+    "/app/backend/tests/test_tani_journal.py",
+    "/app/backend/tests/test_uploads_profile.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional polish) Close the user dropdown before opening the Disconnect Drive AlertDialog so they don't render stacked."
+  ],
+  "critical_code_review_comments": [
+    "Editor.jsx auto-sync is correctly fire-and-forget with silent catch — publish UX is never blocked by Drive failure. Verified via network interception: a single POST /api/posts/{id}/export-drive is issued after both create and update.",
+    "useDriveStatus(user) is re-instantiated independently in Navbar.jsx and Editor.jsx — each calls GET /api/drive/status on mount. Acceptable for now, but if more components need this it should be lifted into a Context provider to avoid duplicate /drive/status fetches per page render.",
+    "Navbar.jsx DropdownMenuItem onSelect e.preventDefault() keeps the dropdown open behind the AlertDialog. Spec said 'dropdown should close'. See design_issues.",
+    "Editor save() captures savedId BEFORE navigate so the export-drive fire-and-forget is reliable even after the SPA route change — good pattern.",
+    "Backend was untouched in this phase; the previously noted html.escape() on post.title for export HTML still stands as a future hardening item."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "100% (44/44)", "frontend": "100% on functional flows; 1 minor UX/visual polish item on Navbar disconnect dropdown stacking" },
+  "test_credentials": "demo@tanijournal.com / Tani@2026 (from /app/memory/test_credentials.md). Demo user_id=user_ee063d86f797.",
+  "seed_data_creation": "Inserted fake drive_credentials doc for demo user_id (deleted at end via the in-test Confirm Disconnect → DELETE /api/drive/disconnect). Created and removed 2 TEST_DriveSync_* posts authored by demo. DB returned to original state (2 demo posts only).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "To simulate Drive 'connected' state: insert into db.drive_credentials a doc with user_id=<demo user_id from GET /api/auth/me>, refresh_token, access_token, client_id, client_secret, token_uri='https://oauth2.googleapis.com/token', scopes=['https://www.googleapis.com/auth/drive.file'], connected_at ISO. The hook useDriveStatus polls GET /api/drive/status once on mount per page render (Navbar and Editor each fetch independently). For verifying the fire-and-forget export-drive request, register a page.on('request') listener BEFORE clicking Save — playwright's expect_request won't reliably catch it because navigation happens synchronously. The frontend login redirects to /dashboard (not /feed). Login form testids: email-input, password-input, auth-submit-btn. Editor testids: editor-title-input, editor-tags-input, editor-visibility-toggle, editor-drive-sync-hint, editor-save-btn. Navbar testids: nav-user-menu, menu-drive-disconnect (when connected) or menu-drive-connect (when not), drive-disconnect-cancel, drive-disconnect-confirm.",
+  "rca_of_the_issue": "Only finding is the cosmetic dropdown-not-closing behind the AlertDialog. Root cause: Radix UI's DropdownMenuItem.onSelect with e.preventDefault() blocks the menu's default close-on-select. The disconnectOpen=true state is set synchronously, so React renders both the dropdown (still open because preventDefault) and the AlertDialog on the same tick. Fix: either drop preventDefault and use a microtask (setTimeout(()=>setDisconnectOpen(true),0)) so the dropdown closes first, or explicitly close the menu via controlled open state on DropdownMenu."
+}

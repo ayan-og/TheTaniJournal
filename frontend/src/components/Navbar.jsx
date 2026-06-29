@@ -3,14 +3,18 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
 import { Button } from "@/components/ui/button";
-import { Moon, Sun, Menu, X, PenLine } from "lucide-react";
+import { Moon, Sun, Menu, X, PenLine, HardDrive } from "lucide-react";
 import AvatarWithDot from "@/components/AvatarWithDot";
 import { useDriveStatus } from "@/hooks/useDriveStatus";
-import { HardDrive } from "lucide-react";
+import { toast } from "sonner";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const NavLink = ({ to, children, testId, onClick }) => {
   const { pathname } = useLocation();
@@ -32,7 +36,14 @@ export default function Navbar() {
   const { theme, toggle } = useTheme();
   const { connected: driveConnected, connect: connectDrive, disconnect: disconnectDrive, busy: driveBusy } = useDriveStatus(user);
   const [open, setOpen] = useState(false);
+  const [disconnectOpen, setDisconnectOpen] = useState(false);
   const navigate = useNavigate();
+
+  const confirmDisconnect = async () => {
+    await disconnectDrive();
+    setDisconnectOpen(false);
+    toast.success("Google Drive disconnected");
+  };
 
   const close = () => setOpen(false);
 
@@ -75,7 +86,10 @@ export default function Navbar() {
                   <DropdownMenuItem onClick={() => navigate(`/u/${user.user_id}`)} data-testid="menu-profile">Profile</DropdownMenuItem>
                   <DropdownMenuSeparator />
                   {driveConnected ? (
-                    <DropdownMenuItem onClick={disconnectDrive} disabled={driveBusy} data-testid="menu-drive-disconnect">
+                    <DropdownMenuItem
+                      onSelect={(e) => { e.preventDefault(); setDisconnectOpen(true); }}
+                      data-testid="menu-drive-disconnect"
+                    >
                       <HardDrive className="h-4 w-4 mr-2 text-primary" /> Drive connected · disconnect
                     </DropdownMenuItem>
                   ) : (
@@ -129,6 +143,23 @@ export default function Navbar() {
           </div>
         </div>
       )}
+
+      <AlertDialog open={disconnectOpen} onOpenChange={setDisconnectOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-serif text-2xl">Disconnect Google Drive?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your existing exported files will stay safely in your Drive. We&apos;ll just stop syncing new entries until you reconnect.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="drive-disconnect-cancel">Keep connected</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDisconnect} disabled={driveBusy} data-testid="drive-disconnect-confirm">
+              Disconnect
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </header>
   );
 }

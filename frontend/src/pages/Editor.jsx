@@ -6,12 +6,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Globe2, Lock } from "lucide-react";
+import { Globe2, Lock, HardDrive } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "@/context/AuthContext";
+import { useDriveStatus } from "@/hooks/useDriveStatus";
 
 export default function Editor() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const { connected: driveConnected } = useDriveStatus(user);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [tags, setTags] = useState("");
@@ -42,15 +46,23 @@ export default function Editor() {
         visibility: isPublic ? "public" : "private",
         excerpt: stripHtml(content).slice(0, 200),
       };
+      let savedId;
       if (isEdit) {
         await api.put(`/posts/${id}`, payload);
+        savedId = id;
         toast.success("Entry updated");
-        navigate(`/post/${id}`);
       } else {
         const { data } = await api.post("/posts", payload);
+        savedId = data.id;
         toast.success("Entry published");
-        navigate(`/post/${data.id}`);
       }
+      // Auto-sync to Drive if connected (fire-and-forget; main save already succeeded)
+      if (driveConnected && savedId) {
+        api.post(`/posts/${savedId}/export-drive`)
+          .then(() => toast.success("Also synced to your Google Drive"))
+          .catch(() => { /* silent — local save succeeded */ });
+      }
+      navigate(`/post/${savedId}`);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Could not save");
     } finally { setBusy(false); }
@@ -93,6 +105,16 @@ export default function Editor() {
             </div>
             <Switch checked={isPublic} onCheckedChange={setIsPublic} data-testid="editor-visibility-toggle" />
           </div>
+
+          {driveConnected && (
+            <div
+              className="flex items-center gap-3 text-xs text-secondary px-2"
+              data-testid="editor-drive-sync-hint"
+            >
+              <HardDrive className="h-3.5 w-3.5 text-primary" />
+              This entry will also be saved to your Google Drive on publish.
+            </div>
+          )}
 
           <div className="flex items-center justify-between pt-2">
             <Button variant="ghost" onClick={() => navigate(-1)} data-testid="editor-cancel-btn">Cancel</Button>
