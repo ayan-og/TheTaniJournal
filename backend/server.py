@@ -658,6 +658,7 @@ from google_auth_oauthlib.flow import Flow  # noqa: E402
 from google.oauth2.credentials import Credentials as GoogleCredentials  # noqa: E402
 from google.auth.transport.requests import Request as GoogleRequest  # noqa: E402
 import io as _io  # noqa: E402
+import html as _html  # noqa: E402
 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
@@ -810,14 +811,16 @@ async def export_post_to_drive(post_id: str, user: dict = Depends(get_current_us
     service = await _drive_service_for(user["user_id"])
     folder_id = _find_or_create_folder(service, DRIVE_FOLDER_NAME)
 
+    safe_title_html = _html.escape(post["title"])
+    safe_meta = _html.escape(f"Tani Journal · {post['created_at']} · {post.get('visibility', 'public')}")
     html = (
         f"<!doctype html><html><head><meta charset='utf-8'>"
-        f"<title>{post['title']}</title>"
+        f"<title>{safe_title_html}</title>"
         f"<style>body{{font-family:Georgia,serif;max-width:680px;margin:48px auto;padding:0 24px;line-height:1.7;color:#1a332b}}"
         f"h1{{font-size:2rem;margin-bottom:.25rem}} .meta{{color:#6a7a72;font-size:.85rem;margin-bottom:2rem}}</style>"
         f"</head><body>"
-        f"<h1>{post['title']}</h1>"
-        f"<div class='meta'>Tani Journal · {post['created_at']} · {post.get('visibility','public')}</div>"
+        f"<h1>{safe_title_html}</h1>"
+        f"<div class='meta'>{safe_meta}</div>"
         f"{post['content']}"
         f"</body></html>"
     )

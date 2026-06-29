@@ -39,7 +39,11 @@ Build a responsive journal website "The Tani Journal" with:
 - Online presence dots everywhere user avatars appear
 - Seed data: demo user + 2 sample posts
 
-## Implemented (2026-02 — phase 2)
+## Implemented (2026-02 — phase 3)
+- **Google Drive export**: per-user OAuth (drive.file scope) connect/disconnect from navbar dropdown. "Save to Drive" button on PostView for owners — uploads the post as HTML into a "The Tani Journal" folder in their personal Drive. Re-sync overwrites the existing file. "Open in Drive" link appears once a post is synced.
+- Backend routes: `GET /api/drive/connect`, `POST /api/drive/callback`, `GET /api/drive/status`, `DELETE /api/drive/disconnect`, `POST /api/posts/{id}/export-drive`.
+- Tokens stored in `drive_credentials` collection keyed by `user_id`; access tokens auto-refreshed via `google-auth`.
+- Exported HTML uses `html.escape()` on post title + metadata (safe against `<`/`>` in titles).
 - **Profile Edit UI**: dialog on Profile page (own profile only) — name, bio (280 char limit), avatar upload via object storage. Updates flow through `PUT /api/users/me` and refresh both Profile + AuthContext user.
 - **Image uploads in editor**: Quill toolbar image button now triggers a file picker → uploads via `POST /api/upload` → inserts the returned `<img>` into the post content. 5MB cap, JPEG/PNG/WebP/GIF only.
 - **File storage**: Backend `POST /api/upload` (auth required) + `GET /api/files/{path}` (public read, cache-controlled) backed by Emergent object storage. MongoDB `files` collection tracks all uploads with `is_deleted` flag for soft delete.
