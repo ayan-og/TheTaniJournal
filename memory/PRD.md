@@ -30,14 +30,19 @@ Build a responsive journal website "The Tani Journal" with:
 - /login with Tabs (Sign in / Sign up) + Continue with Google
 - AuthCallback that processes `#session_id=…` synchronously
 - Feed with search, tag filters, "Load more" pagination
-- Single post view with Quill HTML render, edit/delete (owner), report dialog (non-owner)
+- Single post view with Quill HTML render (DOMPurify-sanitized), edit/delete (owner), report dialog (non-owner)
 - Comments thread + comment reports
 - Personal Dashboard listing own entries with public/private icons, edit/delete
-- Editor for create + edit (Quill toolbar slimmed for distraction-free writing)
-- Profile page /u/:userId with avatar+presence dot, bio, public entries
+- Editor for create + edit (Quill toolbar slimmed for distraction-free writing) **+ image upload via Emergent object storage**
+- Profile page /u/:userId with avatar+presence dot, bio, public entries **+ "Edit profile" dialog for self (name, bio, avatar upload)**
 - Navbar with hamburger drawer, theme toggle (persisted to localStorage)
 - Online presence dots everywhere user avatars appear
 - Seed data: demo user + 2 sample posts
+
+## Implemented (2026-02 — phase 2)
+- **Profile Edit UI**: dialog on Profile page (own profile only) — name, bio (280 char limit), avatar upload via object storage. Updates flow through `PUT /api/users/me` and refresh both Profile + AuthContext user.
+- **Image uploads in editor**: Quill toolbar image button now triggers a file picker → uploads via `POST /api/upload` → inserts the returned `<img>` into the post content. 5MB cap, JPEG/PNG/WebP/GIF only.
+- **File storage**: Backend `POST /api/upload` (auth required) + `GET /api/files/{path}` (public read, cache-controlled) backed by Emergent object storage. MongoDB `files` collection tracks all uploads with `is_deleted` flag for soft delete.
 
 ## Test Credentials
 - `demo@tanijournal.com` / `Tani@2026` (seeded)
