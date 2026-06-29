@@ -1,0 +1,117 @@
+{
+  "theme": "light_and_dark",
+  "archetype": "Organic & Earthy",
+  "design_philosophy": "A minimalist, distraction-free environment that evokes the intimate, tactile feeling of a physical journal. Emphasizes clean typography, generous negative space, and a calming palette to encourage deep reflection and comfortable long-form reading.",
+  "typography": {
+    "fonts": {
+      "headings": {
+        "family": "Cormorant Garamond, serif",
+        "weights": ["300", "400", "600"],
+        "description": "Elegant, traditional serif for journal titles, landing page headlines, and quotes. Gives a literary, timeless feel."
+      },
+      "body": {
+        "family": "Manrope, sans-serif",
+        "weights": ["400", "500", "700"],
+        "description": "Clean, highly readable geometric sans-serif for UI elements, metadata, and long-form journal content."
+      }
+    },
+    "scale": {
+      "h1": "text-5xl sm:text-6xl tracking-tight leading-none font-semibold font-serif",
+      "h2": "text-3xl sm:text-4xl tracking-tight leading-tight font-medium font-serif",
+      "h3": "text-xl sm:text-2xl leading-snug font-medium font-serif",
+      "h4": "text-lg sm:text-xl font-semibold font-sans",
+      "body": "text-base sm:text-lg leading-relaxed font-sans",
+      "small": "text-sm tracking-wide font-sans text-muted-foreground",
+      "overline": "text-xs uppercase tracking-[0.2em] font-sans font-bold"
+    }
+  },
+  "colors": {
+    "light": {
+      "background": "#FDFBF7",
+      "surface": "#F5F2EB",
+      "text_primary": "#1A332B",
+      "text_secondary": "#4A5D54",
+      "primary_accent": "#2B4C3E",
+      "secondary_accent": "#D98A6C",
+      "border": "#E8E3D5",
+      "online_dot": "#3B82F6",
+      "offline_dot": "#333333",
+      "error": "#B83A3A"
+    },
+    "dark": {
+      "background": "#121413",
+      "surface": "#1A1D1C",
+      "text_primary": "#FDFBF7",
+      "text_secondary": "#A1ADA7",
+      "primary_accent": "#A8BFA1",
+      "secondary_accent": "#A85D45",
+      "border": "#2B302E",
+      "online_dot": "#3B82F6",
+      "offline_dot": "#1A1A1A",
+      "error": "#E57373"
+    }
+  },
+  "layout_and_spacing": {
+    "container_padding": "p-6 md:p-12",
+    "section_gap": "gap-16 md:gap-24",
+    "reading_width": "max-w-2xl mx-auto",
+    "grid_strategy": {
+      "landing_page": "Asymmetric bento grid mixing tall and wide blocks. Use negative space aggressively.",
+      "community_feed": "Single-column or minimalist masonry list. Cards should have ample internal padding (p-6 or p-8) to let text breathe.",
+      "dashboard": "Clean, dense table or list view for managing personal entries, keeping focus on titles, privacy status, and dates."
+    }
+  },
+  "components": {
+    "navbar": "Glassmorphism: backdrop-blur-xl bg-background/80 with a delicate 1px bottom border (border-border). Must include a hamburger icon on mobile.",
+    "buttons": "Solid flat backgrounds with slight hover lift (-translate-y-px) and subtle shadow. Primary buttons use primary_accent.",
+    "cards": "Neumorphic/Tactile variant: Flat background matching parent exactly or slightly offset, 1px subtle border, very soft shadow on hover.",
+    "inputs": "Minimalist. For the journal editor, rely on the WYSIWYG cleanly embedded without harsh borders.",
+    "online_presence_dot": "An 8px by 8px rounded-full dot absolute positioned bottom-right of the user avatar. border-2 border-background to separate from the avatar image. Blue (#3B82F6) for online, Dark (#333333 in light, #1A1A1A in dark) for offline.",
+    "wysiwyg_editor": "React Quill. Must be customized to match the typography rules. Remove overly complex toolbar options to keep the writing experience clean and distraction-free."
+  },
+  "media": {
+    "images": [
+      {
+        "url": "https://images.unsplash.com/photo-1606997875311-857add95bca0",
+        "category": "hero",
+        "description": "Minimalist white notebook on brown table. Use as landing page hero image. Overlay should be bg-black/30 maximum if text is placed on top, but prefer placing it side-by-side or in an asymmetric grid block."
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1547104442-991cb31eaafd",
+        "category": "background",
+        "description": "White notebook in white sheets. Perfect for the 'About' section or auth split-screen background."
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1543440709-fc87e72b0fae",
+        "category": "feature",
+        "description": "Gray minimalist journal books. Use in the feature section highlighting the digital journaling experience."
+      },
+      {
+        "url": "https://images.pexels.com/photos/8997895/pexels-photo-8997895.jpeg",
+        "category": "community_banner",
+        "description": "Woman writing by a sunlit window. Use as a banner for the 'Community Feed' or 'Public Journals' section to humanize the social experience."
+      }
+    ],
+    "icons_library": "lucide-react"
+  },
+  "motion": {
+    "hover": "transition-all duration-200 ease-in-out",
+    "page_load": "Fade in with slight upward translation (translate-y-4 to translate-y-0) staggered by 100ms for lists/feed items.",
+    "interaction": "Micro-interactions on buttons, like/comment actions (scale up 1.05x on active/click)."
+  },
+  "accessibility": {
+    "contrast": "Ensure text meets APCA/WCAG standards against background. Check primary_accent and text_primary against surface backgrounds.",
+    "testing_attributes": "All interactive and key informational elements MUST include a data-testid attribute formatted as kebab-case and role-based (e.g., data-testid='login-button', data-testid='journal-feed-item')."
+  },
+  "instructions_to_main_agent": [
+    "Import 'Cormorant Garamond' and 'Manrope' fonts from Google Fonts in the global CSS.",
+    "Configure Tailwind CSS to use the provided hex codes from the 'colors' section. Ensure CSS variables handle the light/dark mode switch gracefully on the :root and .dark classes.",
+    "Use Shadcn UI for complex components (Dialogs, Dropdowns, Tabs for Auth) but override their default Vercel-like styling to match the earthy, minimalist aesthetic (softer borders, specific typography).",
+    "For the individual Journal Post reading view, strictly enforce max-w-2xl to maintain an optimal reading line length. Add ample vertical spacing between paragraphs.",
+    "Style the React Quill editor to blend seamlessly with the app. The editor area should feel like an infinite canvas or a clean sheet of paper, not a boxed-in form field.",
+    "Ensure the responsive navbar features a hamburger menu on mobile that opens a clean, full-screen or slide-out overlay.",
+    "When rendering user profiles and comments, strictly follow the presence indicator rule: blue dot for online, dark dot for offline.",
+    "Do not use placeholder images. If you need user avatars, use a generated generic avatar or UI fallback initials.",
+    "Always apply 'data-testid' to actionable elements and important assertions to ensure testability."
+  ]
+}
