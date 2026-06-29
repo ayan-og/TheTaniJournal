@@ -8,14 +8,12 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Globe2, Lock, HardDrive } from "lucide-react";
 import { toast } from "sonner";
-import { useAuth } from "@/context/AuthContext";
 import { useDriveStatus } from "@/hooks/useDriveStatus";
 
 export default function Editor() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const { connected: driveConnected } = useDriveStatus(user);
+  const { connected: driveConnected } = useDriveStatus();
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [tags, setTags] = useState("");

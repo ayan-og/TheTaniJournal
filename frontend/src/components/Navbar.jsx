@@ -34,7 +34,7 @@ const NavLink = ({ to, children, testId, onClick }) => {
 export default function Navbar() {
   const { user, logout } = useAuth();
   const { theme, toggle } = useTheme();
-  const { connected: driveConnected, connect: connectDrive, disconnect: disconnectDrive, busy: driveBusy } = useDriveStatus(user);
+  const { connected: driveConnected, connect: connectDrive, disconnect: disconnectDrive, busy: driveBusy } = useDriveStatus();
   const [open, setOpen] = useState(false);
   const [disconnectOpen, setDisconnectOpen] = useState(false);
   const navigate = useNavigate();

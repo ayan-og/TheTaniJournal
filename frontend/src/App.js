@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, useLocation, Navigate } from "react-route
 import { Toaster } from "sonner";
 import { AuthProvider } from "@/context/AuthContext";
 import { ThemeProvider } from "@/context/ThemeContext";
+import { DriveStatusProvider } from "@/context/DriveStatusContext";
 import Navbar from "@/components/Navbar";
 import ProtectedRoute from "@/components/ProtectedRoute";
 
@@ -49,8 +50,10 @@ export default function App() {
     <ThemeProvider>
       <BrowserRouter>
         <AuthProvider>
-          <AppShell />
-          <Toaster position="bottom-right" toastOptions={TOAST_OPTIONS} />
+          <DriveStatusProvider>
+            <AppShell />
+            <Toaster position="bottom-right" toastOptions={TOAST_OPTIONS} />
+          </DriveStatusProvider>
         </AuthProvider>
       </BrowserRouter>
     </ThemeProvider>

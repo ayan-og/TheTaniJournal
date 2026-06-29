@@ -21,7 +21,7 @@ export default function PostView() {
   const [post, setPost] = useState(null);
   const [err, setErr] = useState(null);
   const [exporting, setExporting] = useState(false);
-  const { connected: driveConnected, connect: connectDrive } = useDriveStatus(user);
+  const { connected: driveConnected, connect: connectDrive } = useDriveStatus();
 
   useEffect(() => {
     api.get(`/posts/${id}`).then(({ data }) => setPost(data)).catch((e) => setErr(e.response?.data?.detail || "Could not load post"));

@@ -16,6 +16,7 @@ import uuid
 import logging
 import secrets
 import re
+import asyncio
 import bcrypt
 import httpx
 import requests
@@ -614,7 +615,7 @@ async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_cur
     ext = EXT_BY_MIME.get(file.content_type, "bin")
     path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
     try:
-        result = put_object(path, data, file.content_type)
+        result = await asyncio.to_thread(put_object, path, data, file.content_type)
     except HTTPException:
         raise
     except Exception as e:
@@ -696,7 +697,7 @@ async def _drive_service_for(user_id: str):
         scopes=creds_doc.get("scopes", DRIVE_SCOPES),
     )
     if creds.expired and creds.refresh_token:
-        creds.refresh(GoogleRequest())
+        await asyncio.to_thread(creds.refresh, GoogleRequest())
         await db.drive_credentials.update_one(
             {"user_id": user_id},
             {"$set": {
@@ -705,10 +706,10 @@ async def _drive_service_for(user_id: str):
                 "updated_at": iso(now_utc()),
             }},
         )
-    return build("drive", "v3", credentials=creds, cache_discovery=False)
+    return await asyncio.to_thread(build, "drive", "v3", credentials=creds, cache_discovery=False)
 
 
-def _find_or_create_folder(service, name: str) -> str:
+def _find_or_create_folder_sync(service, name: str) -> str:
     q = f"mimeType='application/vnd.google-apps.folder' and name='{name}' and trashed=false"
     res = service.files().list(q=q, fields="files(id,name)", pageSize=1).execute()
     files = res.get("files", [])
@@ -717,6 +718,10 @@ def _find_or_create_folder(service, name: str) -> str:
     meta = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
     folder = service.files().create(body=meta, fields="id").execute()
     return folder["id"]
+
+
+async def _find_or_create_folder(service, name: str) -> str:
+    return await asyncio.to_thread(_find_or_create_folder_sync, service, name)
 
 
 @api.get("/drive/connect")
@@ -745,7 +750,7 @@ async def drive_callback(body: DriveCallbackIn, user: dict = Depends(get_current
         raise HTTPException(400, "OAuth state mismatch")
     try:
         flow = _drive_flow(scopes=None)
-        flow.fetch_token(code=body.code)
+        await asyncio.to_thread(flow.fetch_token, code=body.code)
         creds = flow.credentials
     except Exception as e:
         log.error("Drive token exchange failed: %s", e)
@@ -809,7 +814,7 @@ async def export_post_to_drive(post_id: str, user: dict = Depends(get_current_us
         raise HTTPException(403, "Not your post")
 
     service = await _drive_service_for(user["user_id"])
-    folder_id = _find_or_create_folder(service, DRIVE_FOLDER_NAME)
+    folder_id = await _find_or_create_folder(service, DRIVE_FOLDER_NAME)
 
     safe_title_html = _html.escape(post["title"])
     safe_meta = _html.escape(f"Tani Journal · {post['created_at']} · {post.get('visibility', 'public')}")
@@ -832,23 +837,25 @@ async def export_post_to_drive(post_id: str, user: dict = Depends(get_current_us
         "description": f"Exported from The Tani Journal · post {post['id']}",
     }
 
+    def _create_drive_file():
+        return service.files().create(
+            body=file_meta, media_body=media, fields="id,webViewLink,name,modifiedTime",
+        ).execute()
+
+    def _update_drive_file(file_id: str):
+        return service.files().update(
+            fileId=file_id, media_body=media, fields="id,webViewLink,name,modifiedTime",
+        ).execute()
+
     existing_drive_id = post.get("drive_file_id")
     if existing_drive_id:
         try:
-            drive_file = service.files().update(
-                fileId=existing_drive_id,
-                media_body=media,
-                fields="id,webViewLink,name,modifiedTime",
-            ).execute()
+            drive_file = await asyncio.to_thread(_update_drive_file, existing_drive_id)
         except Exception as e:
             log.warning("Drive update failed, creating new: %s", e)
-            drive_file = service.files().create(
-                body=file_meta, media_body=media, fields="id,webViewLink,name,modifiedTime",
-            ).execute()
+            drive_file = await asyncio.to_thread(_create_drive_file)
     else:
-        drive_file = service.files().create(
-            body=file_meta, media_body=media, fields="id,webViewLink,name,modifiedTime",
-        ).execute()
+        drive_file = await asyncio.to_thread(_create_drive_file)
 
     await db.posts.update_one(
         {"id": post_id},
