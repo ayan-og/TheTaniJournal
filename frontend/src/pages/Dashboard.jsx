@@ -3,8 +3,10 @@ import { Link, useNavigate } from "react-router-dom";
 import api from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
-import { PenLine, Lock, Globe2, Pencil, Trash2 } from "lucide-react";
+import { useDriveStatus } from "@/hooks/useDriveStatus";
+import { PenLine, Lock, Globe2, Pencil, Trash2, HardDrive, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { timeAgo } from "@/lib/timeAgo";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -12,9 +14,11 @@ import {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { connected: driveConnected, connect: connectDrive } = useDriveStatus();
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [backingUp, setBackingUp] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -24,6 +28,28 @@ export default function Dashboard() {
     } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
+
+  const backupAll = async () => {
+    if (!driveConnected) {
+      toast.info("Connecting your Google Drive…");
+      await connectDrive();
+      return;
+    }
+    if (!items.length) return;
+    setBackingUp(true);
+    try {
+      const { data } = await api.post("/drive/backup-all");
+      if (data.failed?.length) {
+        toast.warning(`Backed up ${data.synced} of ${data.total}. ${data.failed.length} failed.`);
+      } else {
+        toast.success(`All ${data.synced} entries synced to Drive`);
+      }
+      // Refresh to show new drive_synced_at on each row
+      await load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not back up to Drive");
+    } finally { setBackingUp(false); }
+  };
 
   const remove = async (id) => {
     try {
@@ -49,6 +75,24 @@ export default function Dashboard() {
         </Button>
       </div>
 
+      {items.length > 0 && (
+        <div className="mb-8 flex items-center justify-between flex-wrap gap-3 rise rise-1">
+          <div className="text-xs uppercase tracking-[0.2em] text-secondary">
+            {items.filter((p) => p.drive_file_id).length} of {items.length} synced to Drive
+          </div>
+          <Button
+            variant="outline"
+            onClick={backupAll}
+            disabled={backingUp}
+            className="rounded-full border-border"
+            data-testid="dashboard-backup-all-btn"
+          >
+            {backingUp ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <HardDrive className="h-4 w-4 mr-2" />}
+            {backingUp ? "Backing up…" : driveConnected ? "Backup all to Drive" : "Connect Drive to backup"}
+          </Button>
+        </div>
+      )}
+
       {loading ? (
         <p className="text-secondary py-20 text-center">Loading…</p>
       ) : items.length === 0 ? (
@@ -69,9 +113,21 @@ export default function Dashboard() {
                 {p.visibility === "public" ? <Globe2 className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
               </span>
               <Link to={`/post/${p.id}`} className="flex-1 min-w-0">
-                <div className="font-serif text-xl truncate">{p.title}</div>
+                <div className="font-serif text-xl truncate flex items-center gap-2">
+                  <span className="truncate">{p.title}</span>
+                  {p.drive_file_id && (
+                    <span
+                      title={p.drive_synced_at ? `Synced to Drive ${timeAgo(p.drive_synced_at)}` : "Synced to Drive"}
+                      className="inline-flex items-center text-primary shrink-0"
+                      data-testid={`drive-synced-${p.id}`}
+                    >
+                      <HardDrive className="h-3.5 w-3.5" />
+                    </span>
+                  )}
+                </div>
                 <div className="text-xs text-secondary mt-1">
                   {new Date(p.created_at).toLocaleDateString()} · {p.tags?.slice(0, 3).join(" · ") || "no tags"}
+                  {p.drive_synced_at && <> · <span className="text-primary/80">synced {timeAgo(p.drive_synced_at)}</span></>}
                 </div>
               </Link>
               <div className="hidden sm:flex items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity">

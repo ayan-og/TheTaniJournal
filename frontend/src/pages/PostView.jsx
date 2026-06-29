@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Lock, ArrowLeft, Pencil, Trash2, HardDrive, ExternalLink } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useDriveStatus } from "@/hooks/useDriveStatus";
+import { timeAgo } from "@/lib/timeAgo";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -102,6 +103,11 @@ export default function PostView() {
                 <HardDrive className="h-4 w-4 mr-1" />
                 {exporting ? "Saving…" : post.drive_file_id ? "Re-sync to Drive" : "Save to Drive"}
               </Button>
+              {post.drive_synced_at && (
+                <span className="text-xs text-secondary" data-testid="post-drive-synced-at">
+                  synced {timeAgo(post.drive_synced_at)}
+                </span>
+              )}
               {post.drive_web_view_link && (
                 <a
                   href={post.drive_web_view_link}

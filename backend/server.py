@@ -805,20 +805,10 @@ async def drive_disconnect(user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 
-@api.post("/posts/{post_id}/export-drive")
-async def export_post_to_drive(post_id: str, user: dict = Depends(get_current_user)):
-    post = await db.posts.find_one({"id": post_id}, {"_id": 0})
-    if not post:
-        raise HTTPException(404, "Post not found")
-    if post["author_id"] != user["user_id"]:
-        raise HTTPException(403, "Not your post")
-
-    service = await _drive_service_for(user["user_id"])
-    folder_id = await _find_or_create_folder(service, DRIVE_FOLDER_NAME)
-
+def _build_post_html(post: dict) -> bytes:
     safe_title_html = _html.escape(post["title"])
     safe_meta = _html.escape(f"Tani Journal · {post['created_at']} · {post.get('visibility', 'public')}")
-    html = (
+    body = (
         f"<!doctype html><html><head><meta charset='utf-8'>"
         f"<title>{safe_title_html}</title>"
         f"<style>body{{font-family:Georgia,serif;max-width:680px;margin:48px auto;padding:0 24px;line-height:1.7;color:#1a332b}}"
@@ -829,7 +819,12 @@ async def export_post_to_drive(post_id: str, user: dict = Depends(get_current_us
         f"{post['content']}"
         f"</body></html>"
     )
-    media = MediaIoBaseUpload(_io.BytesIO(html.encode("utf-8")), mimetype="text/html", resumable=False)
+    return body.encode("utf-8")
+
+
+async def _push_post_to_drive(service, folder_id: str, post: dict) -> dict:
+    """Create or update the Drive file for a single post. Returns the drive_file dict."""
+    media = MediaIoBaseUpload(_io.BytesIO(_build_post_html(post)), mimetype="text/html", resumable=False)
     safe_title = re.sub(r"[^\w\- ]+", "", post["title"]).strip() or post["id"]
     file_meta = {
         "name": f"{safe_title}.html",
@@ -837,40 +832,84 @@ async def export_post_to_drive(post_id: str, user: dict = Depends(get_current_us
         "description": f"Exported from The Tani Journal · post {post['id']}",
     }
 
-    def _create_drive_file():
+    def _create():
         return service.files().create(
             body=file_meta, media_body=media, fields="id,webViewLink,name,modifiedTime",
         ).execute()
 
-    def _update_drive_file(file_id: str):
+    def _update(file_id: str):
         return service.files().update(
             fileId=file_id, media_body=media, fields="id,webViewLink,name,modifiedTime",
         ).execute()
 
-    existing_drive_id = post.get("drive_file_id")
-    if existing_drive_id:
+    existing = post.get("drive_file_id")
+    if existing:
         try:
-            drive_file = await asyncio.to_thread(_update_drive_file, existing_drive_id)
+            return await asyncio.to_thread(_update, existing)
         except Exception as e:
-            log.warning("Drive update failed, creating new: %s", e)
-            drive_file = await asyncio.to_thread(_create_drive_file)
-    else:
-        drive_file = await asyncio.to_thread(_create_drive_file)
+            log.warning("Drive update failed for %s, creating new: %s", post["id"], e)
+            return await asyncio.to_thread(_create)
+    return await asyncio.to_thread(_create)
 
+
+@api.post("/posts/{post_id}/export-drive")
+async def export_post_to_drive(post_id: str, user: dict = Depends(get_current_user)):
+    post = await db.posts.find_one({"id": post_id}, {"_id": 0})
+    if not post:
+        raise HTTPException(404, "Post not found")
+    if post["author_id"] != user["user_id"]:
+        raise HTTPException(403, "Not your post")
+
+    service = await _drive_service_for(user["user_id"])
+    folder_id = await _find_or_create_folder(service, DRIVE_FOLDER_NAME)
+    drive_file = await _push_post_to_drive(service, folder_id, post)
+
+    synced_at = iso(now_utc())
     await db.posts.update_one(
         {"id": post_id},
         {"$set": {
             "drive_file_id": drive_file["id"],
             "drive_web_view_link": drive_file.get("webViewLink"),
-            "drive_synced_at": iso(now_utc()),
+            "drive_synced_at": synced_at,
         }},
     )
     return {
         "drive_file_id": drive_file["id"],
         "web_view_link": drive_file.get("webViewLink"),
         "name": drive_file.get("name"),
-        "synced_at": iso(now_utc()),
+        "synced_at": synced_at,
     }
+
+
+@api.post("/drive/backup-all")
+async def backup_all_posts(user: dict = Depends(get_current_user)):
+    """Export every post owned by the user to their Drive folder. Idempotent."""
+    service = await _drive_service_for(user["user_id"])
+    folder_id = await _find_or_create_folder(service, DRIVE_FOLDER_NAME)
+
+    cursor = db.posts.find({"author_id": user["user_id"]}, {"_id": 0}).sort("created_at", 1)
+    posts = await cursor.to_list(length=1000)
+
+    synced = 0
+    failed = []
+    synced_at = iso(now_utc())
+    for p in posts:
+        try:
+            drive_file = await _push_post_to_drive(service, folder_id, p)
+            await db.posts.update_one(
+                {"id": p["id"]},
+                {"$set": {
+                    "drive_file_id": drive_file["id"],
+                    "drive_web_view_link": drive_file.get("webViewLink"),
+                    "drive_synced_at": synced_at,
+                }},
+            )
+            synced += 1
+        except Exception as e:
+            log.warning("Backup-all: failed for %s: %s", p["id"], e)
+            failed.append({"id": p["id"], "title": p.get("title")})
+
+    return {"synced": synced, "total": len(posts), "failed": failed, "synced_at": synced_at}
 
 
 # ---------- mount ----------

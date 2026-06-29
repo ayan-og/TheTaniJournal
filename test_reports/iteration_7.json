@@ -1,0 +1,52 @@
+{
+  "summary": "Phase 4 backup-to-Drive feature tested end-to-end. Frontend UI is fully correct on all 5 acceptance criteria: '1 of 2 synced to Drive' counter renders, dashboard-backup-all-btn is visible only when items>0 (and shows 'Backup all to Drive' label when fake creds insert 'connected' state), drive-synced-{id} icon and 'synced just now' meta fragment appear only on the patched post, PostView shows 'synced 1m ago' next to Save-to-Drive for owner of the synced post, unsynced post + non-owner correctly omit both post-drive-synced-at and post-export-drive-btn. Backend regression: 47/47 pre-existing tests still PASS (test_drive_export, test_tani_journal, test_uploads_profile, test_async_concurrency) after the _push_post_to_drive/_build_post_html refactor. 401 unauth and 400 'not connected' on /api/drive/backup-all both verified. CRITICAL backend bug: with fake/invalid drive_credentials, /api/drive/backup-all returns 500 (not the spec'd 200 with failed[]=all posts) because _find_or_create_folder() is called OUTSIDE the per-post try/except and bubbles google.auth.exceptions.RefreshError up to FastAPI as a 500. The frontend dashboard backup-all flow therefore never reaches the 'Backed up 0 of N. N failed.' warning branch — it falls to the catch and would show 'Could not back up to Drive' instead.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/drive/backup-all", "issue": "Returns 500 Internal Server Error (no JSON body) instead of the spec'd 200 with {synced:0,total:N,failed:[N items],synced_at} when drive_credentials are present but invalid. Root cause: _find_or_create_folder(service, DRIVE_FOLDER_NAME) is awaited BEFORE the for-post try/except block — when googleapiclient attempts to refresh the fake token it raises google.auth.exceptions.RefreshError, which is uncaught and crashes the request. Fix: wrap both _drive_service_for() and _find_or_create_folder() in a try/except and, on failure, either (a) return 200 with failed=[all posts] + synced=0, or (b) explicitly raise HTTPException(401/400) so the frontend can treat it as 'reconnect needed'. The current behavior breaks idempotency validation AND the frontend warning-toast UX described in the spec.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/posts/{id}/export-drive", "issue": "Same shape of unhandled RefreshError if /_drive_service_for() encounters an expired/invalid token at the build() step — pre-existing, surfaces the same way."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Dashboard 'Backup all to Drive' click with connected-but-invalid creds", "issue": "Because backend returns 500 with no JSON body, the catch branch fires e.response?.data?.detail || 'Could not back up to Drive' (error toast) — the spec'd warning toast 'Backed up X of N. Y failed.' is never shown. Will resolve automatically once backend is fixed to return 200 with failed[].", "affected_selectors": ["[data-testid='dashboard-backup-all-btn']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_drive_backup_all.py",
+    "/app/backend/tests/test_drive_export.py",
+    "/app/backend/tests/test_tani_journal.py",
+    "/app/backend/tests/test_uploads_profile.py",
+    "/app/backend/tests/test_async_concurrency.py",
+    "/app/backend/tests/seed_fake_drive.py",
+    "/app/backend/tests/cleanup_drive_creds.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix /api/drive/backup-all to NOT 500 on invalid Drive credentials. Wrap the _drive_service_for() + _find_or_create_folder() calls in a try/except and on RefreshError either (preferred) return 200 with synced=0, failed=[{id,title} for all posts], synced_at=now — matching the per-post failure path — or raise HTTPException(401, 'Drive token expired; reconnect') so the frontend can prompt re-auth.",
+    "After the fix, re-run /app/backend/tests/test_drive_backup_all.py — both TestBackupAllWithFakeCreds tests should turn green.",
+    "(Nice-to-have) Apply the same protection to /api/posts/{id}/export-drive so a re-sync of a stale-token user surfaces a friendly 401 instead of 500."
+  ],
+  "critical_code_review_comments": [
+    "_push_post_to_drive() and _build_post_html() helpers are clean, focused, and reused correctly by both /export-drive and /backup-all — refactor is solid.",
+    "_build_post_html() now does _html.escape() on title (great — closes the pre-existing iter_6 nit) but still injects post['content'] raw. DOMPurify on the frontend ensures we only persist sanitised HTML, but defense-in-depth would call for sanitising again here before writing to Drive.",
+    "backup_all_posts() does N sequential awaits of _push_post_to_drive (each wrapping a to_thread call). For a user with 100 posts this would serialise — consider asyncio.gather over a bounded semaphore (e.g., 5 concurrent uploads) once the 500-on-folder-failure issue is fixed.",
+    "Idempotency design is correct: drive_file_id is read off the doc and used to call files().update() when present (see _push_post_to_drive). Cannot empirically validate with fake tokens (every call fails), but the code path is right.",
+    "timeAgo.js: clean, returns '' on falsy/invalid input — confirmed in browser ('synced just now' for fresh ISO, 'synced 1m ago' on the PostView)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_drive_backup_all.py (NEW)",
+    "/app/backend/tests/seed_fake_drive.py (NEW)",
+    "/app/backend/tests/cleanup_drive_creds.py (NEW)"
+  ],
+  "success_rate": {"backend": "47/49 (96%) — the 2 failing are the same /backup-all 500 bug", "frontend": "100% on all 5 phase-4 acceptance criteria"},
+  "test_credentials": "demo@tanijournal.com / Tani@2026 (user_id=user_ee063d86f797).",
+  "seed_data_creation": "During test: inserted fake drive_credentials for demo user; patched post_dedfe9aab59d with drive_file_id=fake_drive_id + drive_synced_at=now; left post_0c37317ad5ff clean as the control. All seed data CLEANED UP at end of run via cleanup_drive_creds.py and seed_fake_drive.py clean.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "To reproduce the /backup-all 500 bug: run `python /app/backend/tests/seed_fake_drive.py seed`, login as demo, click dashboard-backup-all-btn. Network panel shows POST /api/drive/backup-all -> 500 'Internal Server Error'. To verify the fix: rerun /app/backend/tests/test_drive_backup_all.py::TestBackupAllWithFakeCreds — both tests must turn green AND the frontend toast should change from error ('Could not back up to Drive') to warning ('Backed up 0 of 2. 2 failed.'). Always run cleanup_drive_creds.py before other tests if a previous run was interrupted (otherwise test_drive_export.py::test_status_initial will fail because it asserts connected=False).",
+  "rca_of_the_issue": "In server.py @api.post('/drive/backup-all') (line ~884), the call sequence is: service = await _drive_service_for(user_id)  →  folder_id = await _find_or_create_folder(service, DRIVE_FOLDER_NAME)  →  for p in posts: try: _push_post_to_drive(...). The first two lines are unguarded; when access_token+refresh_token are invalid, googleapiclient raises RefreshError on the first request (files().list inside _find_or_create_folder_sync). FastAPI converts the unhandled exception to 500 with a text/plain body, which (a) violates the spec's contract (200 + failed[] body shape) and (b) breaks the frontend warning-toast UX which relies on data.failed.length. Mitigation: wrap lines 887-888 of server.py in try/except (RefreshError, HttpError) and on failure return {'synced':0,'total':len(posts),'failed':[{'id':p['id'],'title':p.get('title')} for p in posts],'synced_at':iso(now_utc())} — preserving the contract."
+}
