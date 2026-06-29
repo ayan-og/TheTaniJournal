@@ -87,7 +87,7 @@ export default function Navbar() {
                   <DropdownMenuSeparator />
                   {driveConnected ? (
                     <DropdownMenuItem
-                      onSelect={(e) => { e.preventDefault(); setDisconnectOpen(true); }}
+                      onSelect={() => { setTimeout(() => setDisconnectOpen(true), 0); }}
                       data-testid="menu-drive-disconnect"
                     >
                       <HardDrive className="h-4 w-4 mr-2 text-primary" /> Drive connected · disconnect
