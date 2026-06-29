@@ -10,8 +10,8 @@ import pytest
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://tani-share.preview.emergentagent.com").rstrip("/")
-DEMO_EMAIL = "demo@tanijournal.com"
-DEMO_PASSWORD = "Tani@2026"
+DEMO_EMAIL = os.environ.get("TANI_DEMO_EMAIL", "demo@tanijournal.com")
+DEMO_PASSWORD = os.environ.get("TANI_DEMO_PASSWORD", "Tani@2026")
 
 # ---------------- fixtures ----------------
 @pytest.fixture(scope="session")
@@ -263,7 +263,8 @@ class TestProfile:
         # create one private + one public
         rpub = requests.post(f"{BASE_URL}/api/posts", json={"title": "TEST_PubProf", "content": "<p>p</p>", "visibility": "public"}, headers=h)
         rpriv = requests.post(f"{BASE_URL}/api/posts", json={"title": "TEST_PrivProf", "content": "<p>p</p>", "visibility": "private"}, headers=h)
-        pub_id = rpub.json()["id"]; priv_id = rpriv.json()["id"]
+        pub_id = rpub.json()["id"]
+        priv_id = rpriv.json()["id"]
         try:
             r = requests.get(f"{BASE_URL}/api/users/{demo_user_id}/posts")
             assert r.status_code == 200

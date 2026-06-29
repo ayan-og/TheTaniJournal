@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
+import DOMPurify from "dompurify";
 import api from "@/lib/api";
 import AvatarWithDot from "@/components/AvatarWithDot";
 import CommentSection, { ReportButton } from "@/components/CommentSection";
@@ -22,6 +23,15 @@ export default function PostView() {
   useEffect(() => {
     api.get(`/posts/${id}`).then(({ data }) => setPost(data)).catch((e) => setErr(e.response?.data?.detail || "Could not load post"));
   }, [id]);
+
+  const safeContent = useMemo(
+    () => DOMPurify.sanitize(post?.content || "", {
+      ALLOWED_TAGS: ["p", "br", "strong", "em", "u", "s", "blockquote", "h1", "h2", "h3", "ol", "ul", "li", "a", "code", "pre", "img", "hr"],
+      ALLOWED_ATTR: ["href", "title", "target", "rel", "src", "alt"],
+      ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
+    }),
+    [post?.content],
+  );
 
   if (err) return <div className="px-6 py-20 text-center text-secondary" data-testid="post-error">{err}</div>;
   if (!post) return <div className="px-6 py-20 text-center text-secondary">Loading…</div>;
@@ -95,7 +105,7 @@ export default function PostView() {
           )}
         </div>
 
-        <div className="prose-journal rise rise-2" dangerouslySetInnerHTML={{ __html: post.content }} data-testid="post-content" />
+        <div className="prose-journal rise rise-2" dangerouslySetInnerHTML={{ __html: safeContent }} data-testid="post-content" />
 
         {post.tags?.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-12">

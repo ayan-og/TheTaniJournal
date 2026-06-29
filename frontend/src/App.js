@@ -15,6 +15,8 @@ import Dashboard from "@/pages/Dashboard";
 import Editor from "@/pages/Editor";
 import Profile from "@/pages/Profile";
 
+const TOAST_OPTIONS = { className: "font-sans" };
+
 function AppShell() {
   const location = useLocation();
   // CRITICAL: detect OAuth callback synchronously during render to avoid race conditions
@@ -46,7 +48,7 @@ export default function App() {
       <BrowserRouter>
         <AuthProvider>
           <AppShell />
-          <Toaster position="bottom-right" toastOptions={{ className: "font-sans" }} />
+          <Toaster position="bottom-right" toastOptions={TOAST_OPTIONS} />
         </AuthProvider>
       </BrowserRouter>
     </ThemeProvider>

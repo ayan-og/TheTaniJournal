@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useState, useMemo } from "react";
 
 const ThemeContext = createContext(null);
 
@@ -15,11 +15,12 @@ export function ThemeProvider({ children }) {
     localStorage.setItem("tani_theme", theme);
   }, [theme]);
 
-  return (
-    <ThemeContext.Provider value={{ theme, toggle: () => setTheme((t) => (t === "dark" ? "light" : "dark")) }}>
-      {children}
-    </ThemeContext.Provider>
+  const value = useMemo(
+    () => ({ theme, toggle: () => setTheme((t) => (t === "dark" ? "light" : "dark")) }),
+    [theme],
   );
+
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
 export const useTheme = () => useContext(ThemeContext);

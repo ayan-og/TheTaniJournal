@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useRef } from "react";
 import ReactQuill from "react-quill-new";
 import "react-quill-new/dist/quill.snow.css";
 
@@ -10,11 +10,10 @@ const TOOLBAR = [
   ["clean"],
 ];
 
+const QUILL_MODULES = { toolbar: TOOLBAR };
+
 export default function RichEditor({ value, onChange, placeholder = "Start writing your thoughts…" }) {
   const ref = useRef(null);
-  useEffect(() => {
-    // Force consistent font on render
-  }, []);
   return (
     <div data-testid="rich-editor">
       <ReactQuill
@@ -23,7 +22,7 @@ export default function RichEditor({ value, onChange, placeholder = "Start writi
         value={value}
         onChange={onChange}
         placeholder={placeholder}
-        modules={{ toolbar: TOOLBAR }}
+        modules={QUILL_MODULES}
       />
     </div>
   );

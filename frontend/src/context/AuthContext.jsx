@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from "react";
 import api from "@/lib/api";
 
 const AuthContext = createContext(null);
@@ -36,31 +36,32 @@ export function AuthProvider({ children }) {
     return () => clearInterval(id);
   }, [user]);
 
-  const loginEmail = async (email, password) => {
+  const loginEmail = useCallback(async (email, password) => {
     const { data } = await api.post("/auth/login", { email, password });
     if (data.session_token) localStorage.setItem("tani_session_token", data.session_token);
     setUser(data.user);
     return data.user;
-  };
+  }, []);
 
-  const register = async (email, password, name) => {
+  const register = useCallback(async (email, password, name) => {
     const { data } = await api.post("/auth/register", { email, password, name });
     if (data.session_token) localStorage.setItem("tani_session_token", data.session_token);
     setUser(data.user);
     return data.user;
-  };
+  }, []);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     await api.post("/auth/logout").catch(() => {});
     localStorage.removeItem("tani_session_token");
     setUser(null);
-  };
+  }, []);
 
-  return (
-    <AuthContext.Provider value={{ user, setUser, loading, loginEmail, register, logout, checkAuth }}>
-      {children}
-    </AuthContext.Provider>
+  const value = useMemo(
+    () => ({ user, setUser, loading, loginEmail, register, logout, checkAuth }),
+    [user, loading, loginEmail, register, logout, checkAuth],
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export const useAuth = () => useContext(AuthContext);
