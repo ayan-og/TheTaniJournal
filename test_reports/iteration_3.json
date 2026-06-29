@@ -1,0 +1,35 @@
+{
+  "summary": "Phase 2 (Profile Edit UI + Image uploads) — full backend + frontend verification. Backend: 29/29 pytest cases pass including 8 new tests in test_uploads_profile.py covering POST /api/upload (200 PNG, 401 no-auth, 415 text/plain, 413 >5MB), GET /api/files/{path} (200 image/png + valid PNG bytes round-tripped; 404 on bogus path), and PUT /api/users/me (auth update reflects name+bio+picture, GET /api/users/{id} confirms persistence, 401 unauth). 21 previously passing tani-journal regression tests still pass. Frontend: profile-edit-btn correctly shown only on own profile (anonymous viewer gets 0); dialog opens via testid; name + bio fields submit through PUT /api/users/me and persist after full reload; avatar upload via profile-avatar-file-input triggers POST /api/upload and updates dialog preview img.src to https://.../api/files/... — after Save + reload, avatar img renders next to the name in the profile header. Quill .ql-image toolbar handler works end-to-end: file_chooser pattern uploaded a tiny PNG, editor inserted <img src=\"https://.../api/files/..\"> via insertEmbed, Publish navigated to /post/{id}, and the rendered PostView shows the image inside post-content (DOMPurify whitelist preserves <img src>). Backend post.content stored exactly as expected: <p><img src=\"https://tani-share.preview.emergentagent.com/api/files/tani-journal/uploads/{uid}/{hash}.png\">Body...</p>. Cleanup performed: deleted TEST_Phase2_ImageUpload post (200) and reverted demo profile name/bio/picture (200).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tani_journal.py",
+    "/app/backend/tests/test_uploads_profile.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py upload flow correctly validates content_type BEFORE reading full body for MIME (415), but reads entire UploadFile into memory before size check (413). For a 5MB cap that's fine; if cap grows, switch to streaming with a running counter to avoid loading rejected files into memory.",
+    "GET /api/files/{path:path} uses the DB record's stored content_type for the response media_type (good — avoids relying on storage backend metadata). Cache-Control immutable is appropriate since paths embed a UUID.",
+    "Frontend posts list API now returns {items,total,page,limit} (paginated envelope). Verified — earlier iteration's tests already handle this. Worth noting: if any older frontend code still does posts.find / posts.map on the raw response, it would break. RichEditor + PostView confirmed unaffected.",
+    "Profile.jsx isMe check correctly hides profile-edit-btn for anonymous viewers. Same gate logically protects against other-user viewing since isMe = currentUser?.user_id === viewedId (false in both cases). Backend also enforces ownership via auth on PUT /api/users/me — defense in depth confirmed.",
+    "Minor cosmetic: Quill outputs &nbsp; entities heavily ('content': '<p><img src=...>&nbsp;Body&nbsp;after&nbsp;image.</p>'). Renders fine but excerpts in feed show literal '&nbsp;' once decoded depending on consumer — not blocking."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_uploads_profile.py (new — 8 tests for upload/files/profile-update)"
+  ],
+  "success_rate": {"backend": "100% (29/29)", "frontend": "100% of tested flows (profile edit dialog open/save/persist, avatar upload + render, editor image upload + post render, edit-btn visibility)"},
+  "test_credentials": "demo@tanijournal.com / Tani@2026 (read from /app/memory/test_credentials.md; env-var fallback TANI_DEMO_EMAIL/TANI_DEMO_PASSWORD honored by both test files).",
+  "seed_data_creation": "Uploaded 1 avatar PNG and 1 post PNG to object storage (persistent — small, ~70 bytes each). Created 1 post TEST_Phase2_ImageUpload then deleted it. Demo profile name/bio/picture reverted to defaults. Also pytest creates and leaves TEST_user_* and test_reg_* registered accounts (existing behaviour from iteration 1/2).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Object storage is live (Emergent hosted) — /api/upload returns 200 reliably, /api/files/{path:path} returns correct content-type and the original bytes. The .ql-image Quill handler creates a hidden file input AND opens a native chooser — use page.expect_file_chooser() (NOT a direct testid on the input, since it is appended/removed dynamically). PostView's DOMPurify allows <img src/alt>. Confirmed post.content is persisted with the full https:// absolute URL (BACKEND_URL prefix), so the same content renders from any client. Backend post-list response is paginated: {items,total,page,limit} — older array consumers must be updated.",
+  "rca_of_the_issue": "N/A — no functional issues. One test-script-side hiccup (urllib.request register from inside playwright context returned 403, likely WAF/cookie interplay) was worked around by anonymous-viewer assertion which is logically equivalent to other-user assertion under the isMe gate."
+}

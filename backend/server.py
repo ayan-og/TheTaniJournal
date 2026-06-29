@@ -2,8 +2,8 @@
 Auth: Emergent Google OAuth + Email/Password (both produce a session_token).
 Storage: MongoDB. Presence: heartbeat-based (online if heartbeat within 60s).
 """
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Query
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Query, UploadFile, File
+from fastapi.responses import JSONResponse, Response as FastResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -18,6 +18,7 @@ import secrets
 import re
 import bcrypt
 import httpx
+import requests
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -31,6 +32,64 @@ api = APIRouter(prefix="/api")
 
 EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
 PRESENCE_ONLINE_WINDOW_SECONDS = 60
+
+# ---------- object storage ----------
+STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
+EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY")
+APP_NAME = os.environ.get("APP_NAME", "tani-journal")
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+EXT_BY_MIME = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5MB
+_storage_key: Optional[str] = None
+
+def init_storage() -> Optional[str]:
+    global _storage_key
+    if _storage_key:
+        return _storage_key
+    if not EMERGENT_KEY:
+        return None
+    try:
+        r = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_KEY}, timeout=15)
+        r.raise_for_status()
+        _storage_key = r.json()["storage_key"]
+        return _storage_key
+    except Exception as e:
+        logging.getLogger("tani").error("Storage init failed: %s", e)
+        return None
+
+def put_object(path: str, data: bytes, content_type: str) -> dict:
+    key = init_storage()
+    if not key:
+        raise HTTPException(503, "Storage not configured")
+    r = requests.put(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key, "Content-Type": content_type},
+        data=data,
+        timeout=60,
+    )
+    if r.status_code == 403:
+        # key expired — refresh once and retry
+        globals()["_storage_key"] = None
+        key = init_storage()
+        r = requests.put(
+            f"{STORAGE_URL}/objects/{path}",
+            headers={"X-Storage-Key": key, "Content-Type": content_type},
+            data=data, timeout=60,
+        )
+    r.raise_for_status()
+    return r.json()
+
+def get_object(path: str):
+    key = init_storage()
+    if not key:
+        raise HTTPException(503, "Storage not configured")
+    r = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
+    if r.status_code == 403:
+        globals()["_storage_key"] = None
+        key = init_storage()
+        r = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
+    r.raise_for_status()
+    return r.content, r.headers.get("Content-Type", "application/octet-stream")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("tani")
@@ -541,6 +600,54 @@ async def update_me(body: ProfileUpdate, user: dict = Depends(get_current_user))
     return serialize_user(u)
 
 
+# ---------- file upload (avatars & post images) ----------
+@api.post("/upload")
+async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(415, "Only JPEG, PNG, WebP, or GIF images are allowed")
+    data = await file.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Image is too large (max 5MB)")
+    ext = EXT_BY_MIME.get(file.content_type, "bin")
+    path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
+    try:
+        result = put_object(path, data, file.content_type)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error("Upload failed: %s", e)
+        raise HTTPException(500, "Upload failed")
+    await db.files.insert_one({
+        "id": make_id("file"),
+        "storage_path": result["path"],
+        "original_filename": file.filename,
+        "content_type": file.content_type,
+        "size": result.get("size", len(data)),
+        "owner_id": user["user_id"],
+        "is_deleted": False,
+        "created_at": iso(now_utc()),
+    })
+    return {"path": result["path"], "url": f"/api/files/{result['path']}", "size": result.get("size", len(data))}
+
+@api.get("/files/{path:path}")
+async def download_file(path: str):
+    # Public read for journal images/avatars; access by guessing UUID-based paths is infeasible.
+    record = await db.files.find_one({"storage_path": path, "is_deleted": False}, {"_id": 0})
+    if not record:
+        raise HTTPException(404, "File not found")
+    try:
+        data, ctype = get_object(path)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(404, "File not found")
+    return FastResponse(
+        content=data,
+        media_type=record.get("content_type") or ctype,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
 # ---------- mount ----------
 app.include_router(api)
 
@@ -562,6 +669,9 @@ async def startup():
     await db.posts.create_index([("created_at", -1)])
     await db.comments.create_index("id", unique=True)
     await db.user_sessions.create_index("session_token", unique=True)
+
+    # Initialize Emergent object storage (non-blocking on failure)
+    init_storage()
 
     demo_email = "demo@tanijournal.com"
     existing = await db.users.find_one({"email": demo_email}, {"_id": 0})
