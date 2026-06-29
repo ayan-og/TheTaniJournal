@@ -9,6 +9,7 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import Landing from "@/pages/Landing";
 import Login from "@/pages/Login";
 import AuthCallback from "@/pages/AuthCallback";
+import DriveCallback from "@/pages/DriveCallback";
 import Feed from "@/pages/Feed";
 import PostView from "@/pages/PostView";
 import Dashboard from "@/pages/Dashboard";
@@ -29,6 +30,7 @@ function AppShell() {
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/drive/callback" element={<ProtectedRoute><DriveCallback /></ProtectedRoute>} />
           <Route path="/feed" element={<Feed />} />
           <Route path="/post/:id" element={<PostView />} />
           <Route path="/u/:userId" element={<Profile />} />

@@ -382,6 +382,9 @@ def serialize_post(p: dict, author: Optional[dict] = None) -> dict:
         "created_at": p["created_at"],
         "updated_at": p.get("updated_at", p["created_at"]),
         "comment_count": p.get("comment_count", 0),
+        "drive_file_id": p.get("drive_file_id"),
+        "drive_web_view_link": p.get("drive_web_view_link"),
+        "drive_synced_at": p.get("drive_synced_at"),
     }
 
 async def _attach_authors(posts: list) -> list:
@@ -646,6 +649,218 @@ async def download_file(path: str):
         media_type=record.get("content_type") or ctype,
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
+
+
+# ---------- Google Drive integration (per-user OAuth, drive.file scope) ----------
+from googleapiclient.discovery import build  # noqa: E402
+from googleapiclient.http import MediaIoBaseUpload  # noqa: E402
+from google_auth_oauthlib.flow import Flow  # noqa: E402
+from google.oauth2.credentials import Credentials as GoogleCredentials  # noqa: E402
+from google.auth.transport.requests import Request as GoogleRequest  # noqa: E402
+import io as _io  # noqa: E402
+
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
+GOOGLE_DRIVE_REDIRECT_URI = os.environ.get("GOOGLE_DRIVE_REDIRECT_URI")
+DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+DRIVE_FOLDER_NAME = "The Tani Journal"
+
+
+def _drive_flow(scopes=None):
+    return Flow.from_client_config(
+        {
+            "web": {
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [GOOGLE_DRIVE_REDIRECT_URI],
+            }
+        },
+        scopes=scopes,
+        redirect_uri=GOOGLE_DRIVE_REDIRECT_URI,
+    )
+
+
+async def _drive_service_for(user_id: str):
+    creds_doc = await db.drive_credentials.find_one({"user_id": user_id}, {"_id": 0})
+    if not creds_doc:
+        raise HTTPException(400, "Google Drive is not connected for this account")
+    creds = GoogleCredentials(
+        token=creds_doc.get("access_token"),
+        refresh_token=creds_doc.get("refresh_token"),
+        token_uri=creds_doc.get("token_uri", "https://oauth2.googleapis.com/token"),
+        client_id=creds_doc.get("client_id", GOOGLE_CLIENT_ID),
+        client_secret=creds_doc.get("client_secret", GOOGLE_CLIENT_SECRET),
+        scopes=creds_doc.get("scopes", DRIVE_SCOPES),
+    )
+    if creds.expired and creds.refresh_token:
+        creds.refresh(GoogleRequest())
+        await db.drive_credentials.update_one(
+            {"user_id": user_id},
+            {"$set": {
+                "access_token": creds.token,
+                "expiry": creds.expiry.isoformat() if creds.expiry else None,
+                "updated_at": iso(now_utc()),
+            }},
+        )
+    return build("drive", "v3", credentials=creds, cache_discovery=False)
+
+
+def _find_or_create_folder(service, name: str) -> str:
+    q = f"mimeType='application/vnd.google-apps.folder' and name='{name}' and trashed=false"
+    res = service.files().list(q=q, fields="files(id,name)", pageSize=1).execute()
+    files = res.get("files", [])
+    if files:
+        return files[0]["id"]
+    meta = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
+    folder = service.files().create(body=meta, fields="id").execute()
+    return folder["id"]
+
+
+@api.get("/drive/connect")
+async def drive_connect(user: dict = Depends(get_current_user)):
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(503, "Google Drive is not configured")
+    flow = _drive_flow(scopes=DRIVE_SCOPES)
+    authorization_url, _state = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent",
+        state=user["user_id"],
+    )
+    return {"authorization_url": authorization_url}
+
+
+class DriveCallbackIn(BaseModel):
+    code: str
+    state: Optional[str] = None
+
+
+@api.post("/drive/callback")
+async def drive_callback(body: DriveCallbackIn, user: dict = Depends(get_current_user)):
+    """Frontend /drive/callback page posts {code, state} here. state must equal user_id."""
+    if body.state and body.state != user["user_id"]:
+        raise HTTPException(400, "OAuth state mismatch")
+    try:
+        flow = _drive_flow(scopes=None)
+        flow.fetch_token(code=body.code)
+        creds = flow.credentials
+    except Exception as e:
+        log.error("Drive token exchange failed: %s", e)
+        raise HTTPException(400, "Could not exchange code with Google")
+
+    granted = set(creds.scopes or [])
+    if not set(DRIVE_SCOPES).issubset(granted):
+        raise HTTPException(400, "Required Drive scope was not granted")
+
+    await db.drive_credentials.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {
+            "user_id": user["user_id"],
+            "access_token": creds.token,
+            "refresh_token": creds.refresh_token,
+            "token_uri": creds.token_uri,
+            "client_id": creds.client_id,
+            "client_secret": creds.client_secret,
+            "scopes": list(creds.scopes or []),
+            "expiry": creds.expiry.isoformat() if creds.expiry else None,
+            "updated_at": iso(now_utc()),
+            "connected_at": iso(now_utc()),
+        }},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@api.get("/drive/status")
+async def drive_status(user: dict = Depends(get_current_user)):
+    doc = await db.drive_credentials.find_one(
+        {"user_id": user["user_id"]},
+        {"_id": 0, "connected_at": 1, "scopes": 1},
+    )
+    return {"connected": bool(doc), "connected_at": doc.get("connected_at") if doc else None}
+
+
+@api.delete("/drive/disconnect")
+async def drive_disconnect(user: dict = Depends(get_current_user)):
+    doc = await db.drive_credentials.find_one({"user_id": user["user_id"]}, {"_id": 0, "access_token": 1})
+    if doc and doc.get("access_token"):
+        try:
+            async with httpx.AsyncClient(timeout=10) as cli:
+                await cli.post(
+                    "https://oauth2.googleapis.com/revoke",
+                    params={"token": doc["access_token"]},
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+        except Exception as e:
+            log.warning("Drive revoke failed (continuing): %s", e)
+    await db.drive_credentials.delete_one({"user_id": user["user_id"]})
+    return {"ok": True}
+
+
+@api.post("/posts/{post_id}/export-drive")
+async def export_post_to_drive(post_id: str, user: dict = Depends(get_current_user)):
+    post = await db.posts.find_one({"id": post_id}, {"_id": 0})
+    if not post:
+        raise HTTPException(404, "Post not found")
+    if post["author_id"] != user["user_id"]:
+        raise HTTPException(403, "Not your post")
+
+    service = await _drive_service_for(user["user_id"])
+    folder_id = _find_or_create_folder(service, DRIVE_FOLDER_NAME)
+
+    html = (
+        f"<!doctype html><html><head><meta charset='utf-8'>"
+        f"<title>{post['title']}</title>"
+        f"<style>body{{font-family:Georgia,serif;max-width:680px;margin:48px auto;padding:0 24px;line-height:1.7;color:#1a332b}}"
+        f"h1{{font-size:2rem;margin-bottom:.25rem}} .meta{{color:#6a7a72;font-size:.85rem;margin-bottom:2rem}}</style>"
+        f"</head><body>"
+        f"<h1>{post['title']}</h1>"
+        f"<div class='meta'>Tani Journal · {post['created_at']} · {post.get('visibility','public')}</div>"
+        f"{post['content']}"
+        f"</body></html>"
+    )
+    media = MediaIoBaseUpload(_io.BytesIO(html.encode("utf-8")), mimetype="text/html", resumable=False)
+    safe_title = re.sub(r"[^\w\- ]+", "", post["title"]).strip() or post["id"]
+    file_meta = {
+        "name": f"{safe_title}.html",
+        "parents": [folder_id],
+        "description": f"Exported from The Tani Journal · post {post['id']}",
+    }
+
+    existing_drive_id = post.get("drive_file_id")
+    if existing_drive_id:
+        try:
+            drive_file = service.files().update(
+                fileId=existing_drive_id,
+                media_body=media,
+                fields="id,webViewLink,name,modifiedTime",
+            ).execute()
+        except Exception as e:
+            log.warning("Drive update failed, creating new: %s", e)
+            drive_file = service.files().create(
+                body=file_meta, media_body=media, fields="id,webViewLink,name,modifiedTime",
+            ).execute()
+    else:
+        drive_file = service.files().create(
+            body=file_meta, media_body=media, fields="id,webViewLink,name,modifiedTime",
+        ).execute()
+
+    await db.posts.update_one(
+        {"id": post_id},
+        {"$set": {
+            "drive_file_id": drive_file["id"],
+            "drive_web_view_link": drive_file.get("webViewLink"),
+            "drive_synced_at": iso(now_utc()),
+        }},
+    )
+    return {
+        "drive_file_id": drive_file["id"],
+        "web_view_link": drive_file.get("webViewLink"),
+        "name": drive_file.get("name"),
+        "synced_at": iso(now_utc()),
+    }
 
 
 # ---------- mount ----------

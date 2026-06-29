@@ -5,6 +5,8 @@ import { useTheme } from "@/context/ThemeContext";
 import { Button } from "@/components/ui/button";
 import { Moon, Sun, Menu, X, PenLine } from "lucide-react";
 import AvatarWithDot from "@/components/AvatarWithDot";
+import { useDriveStatus } from "@/hooks/useDriveStatus";
+import { HardDrive } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel,
@@ -28,6 +30,7 @@ const NavLink = ({ to, children, testId, onClick }) => {
 export default function Navbar() {
   const { user, logout } = useAuth();
   const { theme, toggle } = useTheme();
+  const { connected: driveConnected, connect: connectDrive, disconnect: disconnectDrive, busy: driveBusy } = useDriveStatus(user);
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -70,6 +73,16 @@ export default function Navbar() {
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => navigate("/dashboard")} data-testid="menu-dashboard">My Journal</DropdownMenuItem>
                   <DropdownMenuItem onClick={() => navigate(`/u/${user.user_id}`)} data-testid="menu-profile">Profile</DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  {driveConnected ? (
+                    <DropdownMenuItem onClick={disconnectDrive} disabled={driveBusy} data-testid="menu-drive-disconnect">
+                      <HardDrive className="h-4 w-4 mr-2 text-primary" /> Drive connected · disconnect
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem onClick={connectDrive} disabled={driveBusy} data-testid="menu-drive-connect">
+                      <HardDrive className="h-4 w-4 mr-2" /> Connect Google Drive
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={async () => { await logout(); navigate("/"); }} data-testid="menu-logout">Sign out</DropdownMenuItem>
                 </DropdownMenuContent>

@@ -5,8 +5,9 @@ import api from "@/lib/api";
 import AvatarWithDot from "@/components/AvatarWithDot";
 import CommentSection, { ReportButton } from "@/components/CommentSection";
 import { Button } from "@/components/ui/button";
-import { Lock, ArrowLeft, Pencil, Trash2 } from "lucide-react";
+import { Lock, ArrowLeft, Pencil, Trash2, HardDrive, ExternalLink } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { useDriveStatus } from "@/hooks/useDriveStatus";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -19,6 +20,8 @@ export default function PostView() {
   const { user } = useAuth();
   const [post, setPost] = useState(null);
   const [err, setErr] = useState(null);
+  const [exporting, setExporting] = useState(false);
+  const { connected: driveConnected, connect: connectDrive } = useDriveStatus(user);
 
   useEffect(() => {
     api.get(`/posts/${id}`).then(({ data }) => setPost(data)).catch((e) => setErr(e.response?.data?.detail || "Could not load post"));
@@ -47,6 +50,22 @@ export default function PostView() {
     } catch (e) {
       toast.error(e.response?.data?.detail || "Could not delete");
     }
+  };
+
+  const exportToDrive = async () => {
+    if (!driveConnected) {
+      toast.info("Connecting your Drive…");
+      await connectDrive();
+      return;
+    }
+    setExporting(true);
+    try {
+      const { data } = await api.post(`/posts/${id}/export-drive`);
+      setPost((prev) => prev ? { ...prev, drive_web_view_link: data.web_view_link, drive_file_id: data.drive_file_id, drive_synced_at: data.synced_at } : prev);
+      toast.success("Saved to your Google Drive");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not export to Drive");
+    } finally { setExporting(false); }
   };
 
   return (
@@ -78,7 +97,22 @@ export default function PostView() {
           </div>
 
           {isOwner ? (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button variant="ghost" size="sm" onClick={exportToDrive} disabled={exporting} data-testid="post-export-drive-btn">
+                <HardDrive className="h-4 w-4 mr-1" />
+                {exporting ? "Saving…" : post.drive_file_id ? "Re-sync to Drive" : "Save to Drive"}
+              </Button>
+              {post.drive_web_view_link && (
+                <a
+                  href={post.drive_web_view_link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center text-xs text-primary hover:underline"
+                  data-testid="post-drive-link"
+                >
+                  <ExternalLink className="h-3 w-3 mr-1" /> Open in Drive
+                </a>
+              )}
               <Button variant="ghost" size="sm" onClick={() => navigate(`/editor/${post.id}`)} data-testid="post-edit-btn">
                 <Pencil className="h-4 w-4 mr-1" /> Edit
               </Button>
