@@ -4,8 +4,10 @@ import DOMPurify from "dompurify";
 import api from "@/lib/api";
 import AvatarWithDot from "@/components/AvatarWithDot";
 import CommentSection, { ReportButton } from "@/components/CommentSection";
+import MediaGallery from "@/components/MediaGallery";
+import PostStats from "@/components/PostStats";
 import { Button } from "@/components/ui/button";
-import { Lock, ArrowLeft, Pencil, Trash2, HardDrive, ExternalLink } from "lucide-react";
+import { Lock, ArrowLeft, Pencil, Trash2, HardDrive, ExternalLink, AlertTriangle } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useDriveStatus } from "@/hooks/useDriveStatus";
 import { timeAgo } from "@/lib/timeAgo";
@@ -82,6 +84,20 @@ export default function PostView() {
           </div>
         )}
 
+        {(post.is_explicit || post.is_18_plus) && (
+          <div className="flex items-start gap-3 p-4 mb-6 rounded-lg bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800">
+            <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-red-900 dark:text-red-100">Content Warning</p>
+              <p className="text-xs text-red-800 dark:text-red-200 mt-1">
+                {post.is_explicit && post.is_18_plus && "This post contains explicit and adult content. 18+ only."}
+                {post.is_explicit && !post.is_18_plus && "This post contains explicit content."}
+                {!post.is_explicit && post.is_18_plus && "This post is intended for mature audiences (18+)."}
+              </p>
+            </div>
+          </div>
+        )}
+
         <h1 className="font-serif text-4xl sm:text-5xl leading-tight tracking-tight mb-6 rise" data-testid="post-title">
           {post.title}
         </h1>
@@ -146,6 +162,14 @@ export default function PostView() {
         </div>
 
         <div className="prose-journal rise rise-2" dangerouslySetInnerHTML={{ __html: safeContent }} data-testid="post-content" />
+
+        {post.media?.length > 0 && (
+          <MediaGallery media={post.media.map(path => ({ url: `/api/files/${path}`, filename: path.split("/").pop() }))} layout={post.layout || "single"} />
+        )}
+
+        <div className="flex items-center justify-between py-6 border-t border-b border-border mt-8">
+          <PostStats postId={post.id} initialLikes={post.likes_count} initialViews={post.views_count} />
+        </div>
 
         {post.tags?.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-12">

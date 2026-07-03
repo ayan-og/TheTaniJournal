@@ -3,8 +3,10 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
 import { Button } from "@/components/ui/button";
-import { Moon, Sun, Menu, X, PenLine, HardDrive } from "lucide-react";
+import { Moon, Sun, Menu, X, PenLine, HardDrive, Settings, Palette, Type } from "lucide-react";
 import AvatarWithDot from "@/components/AvatarWithDot";
+import FontStyleSelector from "@/components/FontStyleSelector";
+import BackgroundColorSelector from "@/components/BackgroundColorSelector";
 import { useDriveStatus } from "@/hooks/useDriveStatus";
 import { toast } from "sonner";
 import {
@@ -15,6 +17,9 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
+} from "@/components/ui/dialog";
 
 const NavLink = ({ to, children, testId, onClick }) => {
   const { pathname } = useLocation();
@@ -51,6 +56,7 @@ export default function Navbar() {
     <header className="sticky top-0 z-40 glass border-b border-border">
       <div className="mx-auto max-w-6xl px-6 md:px-10 h-16 flex items-center justify-between">
         <Link to="/" className="flex items-center gap-2" data-testid="nav-logo">
+          <div className="w-8 h-8 bg-gradient-to-br from-primary to-primary/60 rounded-lg flex items-center justify-center text-white font-bold text-lg">T</div>
           <span className="font-serif text-2xl tracking-tight">The Tani Journal</span>
         </Link>
 
@@ -84,6 +90,14 @@ export default function Navbar() {
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => navigate("/dashboard")} data-testid="menu-dashboard">My Journal</DropdownMenuItem>
                   <DropdownMenuItem onClick={() => navigate(`/u/${user.user_id}`)} data-testid="menu-profile">Profile</DropdownMenuItem>
+                  {user.role === "admin" && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => navigate("/admin")} data-testid="menu-admin">
+                        <Settings className="h-4 w-4 mr-2" /> Admin Panel
+                      </DropdownMenuItem>
+                    </>
+                  )}
                   <DropdownMenuSeparator />
                   {driveConnected ? (
                     <DropdownMenuItem
@@ -97,6 +111,26 @@ export default function Navbar() {
                       <HardDrive className="h-4 w-4 mr-2" /> Connect Google Drive
                     </DropdownMenuItem>
                   )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild>
+                    <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+                      <DialogTrigger asChild>
+                        <button className="w-full text-left px-2 py-1.5 text-sm rounded flex items-center gap-2">
+                          <Palette className="h-4 w-4" /> Display Settings
+                        </button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>Display Settings</DialogTitle>
+                          <DialogDescription>Customize your reading experience</DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-6 py-4">
+                          <FontStyleSelector />
+                          <BackgroundColorSelector />
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                  </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={async () => { await logout(); navigate("/"); }} data-testid="menu-logout">Sign out</DropdownMenuItem>
                 </DropdownMenuContent>
@@ -123,6 +157,7 @@ export default function Navbar() {
             <NavLink to="/feed" testId="m-nav-feed" onClick={close}>Feed</NavLink>
             {user && <NavLink to="/dashboard" testId="m-nav-dashboard" onClick={close}>My Journal</NavLink>}
             {user && <NavLink to={`/u/${user.user_id}`} testId="m-nav-profile" onClick={close}>Profile</NavLink>}
+            {user?.role === "admin" && <NavLink to="/admin" testId="m-nav-admin" onClick={close}>Admin Panel</NavLink>}
             <div className="flex items-center gap-3 pt-2">
               <Button variant="ghost" size="icon" onClick={toggle} data-testid="m-theme-toggle">
                 {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}

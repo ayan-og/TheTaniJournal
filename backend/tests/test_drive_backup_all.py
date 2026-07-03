@@ -9,6 +9,7 @@ Covers:
 Uses pymongo (sync) so each test owns its own connection — no asyncio loop reuse issues.
 """
 import os
+import uuid
 import pytest
 import requests
 from datetime import datetime, timezone, timedelta
@@ -19,13 +20,17 @@ from pymongo import MongoClient
 load_dotenv(Path("/app/backend/.env"))
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://tani-share.preview.emergentagent.com").rstrip("/")
-DEMO_EMAIL = "demo@tanijournal.com"
-DEMO_PASSWORD = "Tani@2026"
 
 
 @pytest.fixture(scope="module")
 def demo_token():
-    r = requests.post(f"{BASE_URL}/api/auth/login", json={"email": DEMO_EMAIL, "password": DEMO_PASSWORD})
+    suffix = uuid.uuid4().hex[:8]
+    payload = {
+        "email": f"test_drive_backup_{suffix}@example.com",
+        "password": "TestPass#2026",
+        "name": f"Test Drive Backup {suffix}",
+    }
+    r = requests.post(f"{BASE_URL}/api/auth/register", json=payload)
     assert r.status_code == 200, r.text
     return r.json()["session_token"]
 

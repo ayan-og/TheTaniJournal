@@ -16,6 +16,7 @@ import PostView from "@/pages/PostView";
 import Dashboard from "@/pages/Dashboard";
 import Editor from "@/pages/Editor";
 import Profile from "@/pages/Profile";
+import AdminPanel from "@/pages/AdminPanel";
 
 const TOAST_OPTIONS = { className: "font-sans" };
 
@@ -38,6 +39,7 @@ function AppShell() {
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/editor" element={<ProtectedRoute><Editor /></ProtectedRoute>} />
           <Route path="/editor/:id" element={<ProtectedRoute><Editor /></ProtectedRoute>} />
+          <Route path="/admin" element={<ProtectedRoute><AdminPanel /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

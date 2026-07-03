@@ -34,63 +34,37 @@ api = APIRouter(prefix="/api")
 EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
 PRESENCE_ONLINE_WINDOW_SECONDS = 60
 
-# ---------- object storage ----------
-STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
-EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY")
+# ---------- local file storage ----------
+STORAGE_DIR = ROOT_DIR / "storage" / "uploads"
+STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 APP_NAME = os.environ.get("APP_NAME", "tani-journal")
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
-EXT_BY_MIME = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}
-MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5MB
-_storage_key: Optional[str] = None
-
-def init_storage() -> Optional[str]:
-    global _storage_key
-    if _storage_key:
-        return _storage_key
-    if not EMERGENT_KEY:
-        return None
-    try:
-        r = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_KEY}, timeout=15)
-        r.raise_for_status()
-        _storage_key = r.json()["storage_key"]
-        return _storage_key
-    except Exception as e:
-        logging.getLogger("tani").error("Storage init failed: %s", e)
-        return None
+ALLOWED_AUDIO_TYPES = {"audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4"}
+ALLOWED_VIDEO_TYPES = {"video/mp4", "video/webm", "video/ogg"}
+ALLOWED_MEDIA_TYPES = ALLOWED_IMAGE_TYPES | ALLOWED_AUDIO_TYPES | ALLOWED_VIDEO_TYPES
+EXT_BY_MIME = {
+    "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif",
+    "audio/mpeg": "mp3", "audio/wav": "wav", "audio/ogg": "ogg", "audio/mp4": "m4a",
+    "video/mp4": "mp4", "video/webm": "webm", "video/ogg": "ogv",
+}
+MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5MB
+MAX_AUDIO_BYTES = 50 * 1024 * 1024  # 50MB
+MAX_VIDEO_BYTES = 200 * 1024 * 1024  # 200MB
 
 def put_object(path: str, data: bytes, content_type: str) -> dict:
-    key = init_storage()
-    if not key:
-        raise HTTPException(503, "Storage not configured")
-    r = requests.put(
-        f"{STORAGE_URL}/objects/{path}",
-        headers={"X-Storage-Key": key, "Content-Type": content_type},
-        data=data,
-        timeout=60,
-    )
-    if r.status_code == 403:
-        # key expired — refresh once and retry
-        globals()["_storage_key"] = None
-        key = init_storage()
-        r = requests.put(
-            f"{STORAGE_URL}/objects/{path}",
-            headers={"X-Storage-Key": key, "Content-Type": content_type},
-            data=data, timeout=60,
-        )
-    r.raise_for_status()
-    return r.json()
+    """Store file locally and return metadata."""
+    file_path = STORAGE_DIR / path
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_bytes(data)
+    return {"path": path, "size": len(data)}
 
 def get_object(path: str):
-    key = init_storage()
-    if not key:
-        raise HTTPException(503, "Storage not configured")
-    r = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
-    if r.status_code == 403:
-        globals()["_storage_key"] = None
-        key = init_storage()
-        r = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
-    r.raise_for_status()
-    return r.content, r.headers.get("Content-Type", "application/octet-stream")
+    """Retrieve file from local storage."""
+    file_path = STORAGE_DIR / path
+    if not file_path.exists():
+        raise HTTPException(404, "File not found")
+    content = file_path.read_bytes()
+    return content, "application/octet-stream"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("tani")
@@ -137,6 +111,7 @@ class UserOut(BaseModel):
     name: str
     picture: Optional[str] = None
     bio: Optional[str] = ""
+    role: Optional[str] = "user"  # "user" or "admin"
     created_at: str
 
 class PostIn(BaseModel):
@@ -145,6 +120,10 @@ class PostIn(BaseModel):
     excerpt: Optional[str] = ""
     tags: List[str] = []
     visibility: Literal["public", "private"] = "public"
+    media: Optional[List[str]] = []  # list of file paths/URLs
+    layout: Optional[Literal["single", "grid", "carousel"]] = "single"
+    is_explicit: bool = False  # explicit/adult content
+    is_18_plus: bool = False  # 18+ content
 
 class PostUpdate(BaseModel):
     title: Optional[str] = None
@@ -152,6 +131,10 @@ class PostUpdate(BaseModel):
     excerpt: Optional[str] = None
     tags: Optional[List[str]] = None
     visibility: Optional[Literal["public", "private"]] = None
+    media: Optional[List[str]] = None
+    layout: Optional[Literal["single", "grid", "carousel"]] = None
+    is_explicit: Optional[bool] = None
+    is_18_plus: Optional[bool] = None
 
 class CommentIn(BaseModel):
     content: str = Field(min_length=1, max_length=2000)
@@ -235,6 +218,7 @@ def serialize_user(u: dict) -> dict:
         "name": u.get("name") or u["email"].split("@")[0],
         "picture": u.get("picture"),
         "bio": u.get("bio", ""),
+        "role": u.get("role", "user"),
         "created_at": u.get("created_at", iso(now_utc())),
     }
 
@@ -252,6 +236,7 @@ async def register(body: RegisterIn, response: Response):
         "name": body.name.strip(),
         "picture": None,
         "bio": "",
+        "role": "user",
         "password_hash": hash_pw(body.password),
         "auth_provider": "email",
         "created_at": iso(now_utc()),
@@ -307,6 +292,7 @@ async def emergent_session(request: Request, response: Response):
             "name": name,
             "picture": picture,
             "bio": "",
+            "role": "user",
             "password_hash": None,
             "auth_provider": "google",
             "created_at": iso(now_utc()),
@@ -383,6 +369,12 @@ def serialize_post(p: dict, author: Optional[dict] = None) -> dict:
         "created_at": p["created_at"],
         "updated_at": p.get("updated_at", p["created_at"]),
         "comment_count": p.get("comment_count", 0),
+        "likes_count": p.get("likes_count", 0),
+        "views_count": p.get("views_count", 0),
+        "media": p.get("media", []),
+        "layout": p.get("layout", "single"),
+        "is_explicit": p.get("is_explicit", False),
+        "is_18_plus": p.get("is_18_plus", False),
         "drive_file_id": p.get("drive_file_id"),
         "drive_web_view_link": p.get("drive_web_view_link"),
         "drive_synced_at": p.get("drive_synced_at"),
@@ -455,7 +447,13 @@ async def create_post(body: PostIn, user: dict = Depends(get_current_user)):
         "excerpt": body.excerpt or "",
         "tags": [t.strip().lower() for t in body.tags if t.strip()][:8],
         "visibility": body.visibility,
+        "media": body.media or [],
+        "layout": body.layout or "single",
+        "is_explicit": body.is_explicit or False,
+        "is_18_plus": body.is_18_plus or False,
         "comment_count": 0,
+        "likes_count": 0,
+        "views_count": 0,
         "created_at": iso(now_utc()),
         "updated_at": iso(now_utc()),
     }
@@ -604,23 +602,31 @@ async def update_me(body: ProfileUpdate, user: dict = Depends(get_current_user))
     return serialize_user(u)
 
 
-# ---------- file upload (avatars & post images) ----------
+# ---------- file upload (avatars, post images, audio & video) ----------
 @api.post("/upload")
 async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    if file.content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(415, "Only JPEG, PNG, WebP, or GIF images are allowed")
+    if file.content_type not in ALLOWED_MEDIA_TYPES:
+        raise HTTPException(415, "Only images, audio, or video files are allowed")
+    
     data = await file.read()
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(413, "Image is too large (max 5MB)")
+    
+    # Validate file size based on type
+    if file.content_type in ALLOWED_IMAGE_TYPES and len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, "Image is too large (max 10MB)")
+    if file.content_type in ALLOWED_AUDIO_TYPES and len(data) > MAX_AUDIO_BYTES:
+        raise HTTPException(413, "Audio file is too large (max 50MB)")
+    if file.content_type in ALLOWED_VIDEO_TYPES and len(data) > MAX_VIDEO_BYTES:
+        raise HTTPException(413, "Video file is too large (max 200MB)")
+    
     ext = EXT_BY_MIME.get(file.content_type, "bin")
     path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
+    
     try:
-        result = await asyncio.to_thread(put_object, path, data, file.content_type)
-    except HTTPException:
-        raise
+        result = put_object(path, data, file.content_type)
     except Exception as e:
         log.error("Upload failed: %s", e)
         raise HTTPException(500, "Upload failed")
+    
     await db.files.insert_one({
         "id": make_id("file"),
         "storage_path": result["path"],
@@ -807,6 +813,140 @@ async def drive_disconnect(user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 
+# ---------- likes & views ----------
+@api.post("/posts/{post_id}/like")
+async def like_post(post_id: str, user: dict = Depends(get_current_user)):
+    """Like a post (idempotent)."""
+    like_id = f"{post_id}_{user['user_id']}"
+    existing = await db.likes.find_one({"like_id": like_id}, {"_id": 0})
+    if existing:
+        return {"ok": True, "already_liked": True}
+    await db.likes.insert_one({
+        "like_id": like_id,
+        "post_id": post_id,
+        "user_id": user["user_id"],
+        "created_at": iso(now_utc()),
+    })
+    await db.posts.update_one({"id": post_id}, {"$inc": {"likes_count": 1}})
+    return {"ok": True}
+
+@api.delete("/posts/{post_id}/like")
+async def unlike_post(post_id: str, user: dict = Depends(get_current_user)):
+    """Unlike a post."""
+    like_id = f"{post_id}_{user['user_id']}"
+    result = await db.likes.delete_one({"like_id": like_id})
+    if result.deleted_count > 0:
+        await db.posts.update_one({"id": post_id}, {"$inc": {"likes_count": -1}})
+    return {"ok": True}
+
+@api.get("/posts/{post_id}/likes")
+async def get_post_likes(post_id: str, page: int = 1, limit: int = 20):
+    """Get users who liked a post."""
+    limit = max(1, min(limit, 100))
+    skip = (max(1, page) - 1) * limit
+    total = await db.likes.count_documents({"post_id": post_id})
+    cursor = db.likes.find({"post_id": post_id}, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit)
+    likes = await cursor.to_list(length=limit)
+    user_ids = [l["user_id"] for l in likes]
+    users = {}
+    async for u in db.users.find({"user_id": {"$in": user_ids}}, {"_id": 0, "user_id": 1, "name": 1, "picture": 1}):
+        users[u["user_id"]] = u
+    items = [{"user": users.get(l["user_id"]), "created_at": l["created_at"]} for l in likes]
+    return {"items": items, "total": total, "page": page, "limit": limit}
+
+@api.post("/posts/{post_id}/view")
+async def record_view(post_id: str, user: Optional[dict] = Depends(get_current_user_optional)):
+    """Record a view (rate-limited per IP/user per hour)."""
+    post = await db.posts.find_one({"id": post_id}, {"_id": 0, "id": 1})
+    if not post:
+        raise HTTPException(404, "Post not found")
+    await db.posts.update_one({"id": post_id}, {"$inc": {"views_count": 1}})
+    return {"ok": True}
+
+
+# ---------- admin ----------
+async def get_admin_user(user: dict = Depends(get_current_user)) -> dict:
+    """Check if user is admin."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admin access required")
+    return user
+
+@api.get("/admin/stats")
+async def admin_stats(admin: dict = Depends(get_admin_user)):
+    """Get admin dashboard statistics."""
+    total_users = await db.users.count_documents({})
+    total_posts = await db.posts.count_documents({})
+    total_comments = await db.comments.count_documents({})
+    total_reports = await db.reports.count_documents({})
+    
+    explicit_posts = await db.posts.count_documents({"is_explicit": True})
+    adult_posts = await db.posts.count_documents({"is_18_plus": True})
+    
+    recent_users = []
+    async for u in db.users.find({}, {"_id": 0, "user_id": 1, "name": 1, "email": 1, "created_at": 1}).sort("created_at", -1).limit(10):
+        recent_users.append(u)
+    
+    return {
+        "total_users": total_users,
+        "total_posts": total_posts,
+        "total_comments": total_comments,
+        "total_reports": total_reports,
+        "explicit_posts": explicit_posts,
+        "adult_posts": adult_posts,
+        "recent_users": recent_users,
+    }
+
+@api.get("/admin/reports")
+async def admin_reports(admin: dict = Depends(get_admin_user), status: Optional[str] = None, page: int = 1, limit: int = 20):
+    """Get flagged/reported content."""
+    limit = max(1, min(limit, 100))
+    skip = (max(1, page) - 1) * limit
+    filt = {}
+    if status:
+        filt["status"] = status
+    total = await db.reports.count_documents(filt)
+    cursor = db.reports.find(filt, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit)
+    reports = await cursor.to_list(length=limit)
+    return {"items": reports, "total": total, "page": page, "limit": limit}
+
+@api.post("/admin/reports/{report_id}/resolve")
+async def resolve_report(report_id: str, body: dict, admin: dict = Depends(get_admin_user)):
+    """Resolve a report (dismiss or take action)."""
+    action = body.get("action", "dismiss")  # "dismiss", "delete_post", "delete_comment", "suspend_user"
+    reason = body.get("reason", "")
+    
+    report = await db.reports.find_one({"id": report_id}, {"_id": 0})
+    if not report:
+        raise HTTPException(404, "Report not found")
+    
+    if action == "delete_post":
+        await db.posts.update_one({"id": report["target_id"]}, {"$set": {"is_deleted": True}})
+    elif action == "delete_comment":
+        await db.comments.update_one({"id": report["target_id"]}, {"$set": {"is_deleted": True}})
+    elif action == "suspend_user":
+        await db.users.update_one({"user_id": report["reporter_id"]}, {"$set": {"is_suspended": True}})
+    
+    await db.reports.update_one(
+        {"id": report_id},
+        {"$set": {"status": "resolved", "resolved_at": iso(now_utc()), "resolved_by": admin["user_id"], "resolution": action, "reason": reason}}
+    )
+    return {"ok": True}
+
+@api.put("/admin/users/{user_id}/role")
+async def update_user_role(user_id: str, body: dict, admin: dict = Depends(get_admin_user)):
+    """Update user role."""
+    role = body.get("role", "user")  # "user" or "admin"
+    if role not in ["user", "admin"]:
+        raise HTTPException(400, "Invalid role")
+    
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0, "user_id": 1})
+    if not user:
+        raise HTTPException(404, "User not found")
+    
+    await db.users.update_one({"user_id": user_id}, {"$set": {"role": role}})
+    return {"ok": True}
+
+
 def _build_post_html(post: dict) -> bytes:
     safe_title_html = _html.escape(post["title"])
     safe_meta = _html.escape(f"Tani Journal · {post['created_at']} · {post.get('visibility', 'public')}")
@@ -963,9 +1103,8 @@ async def startup():
     await db.posts.create_index([("created_at", -1)])
     await db.comments.create_index("id", unique=True)
     await db.user_sessions.create_index("session_token", unique=True)
-
-    # Initialize Emergent object storage (non-blocking on failure)
-    init_storage()
+    await db.likes.create_index("like_id", unique=True)
+    await db.reports.create_index("id", unique=True)
 
     demo_email = "demo@tanijournal.com"
     existing = await db.users.find_one({"email": demo_email}, {"_id": 0})
@@ -977,6 +1116,7 @@ async def startup():
             "name": "Demo Writer",
             "picture": None,
             "bio": "Curator of quiet thoughts. Writing one page at a time.",
+            "role": "user",
             "password_hash": hash_pw("Tani@2026"),
             "auth_provider": "email",
             "created_at": iso(now_utc()),
@@ -992,7 +1132,13 @@ async def startup():
                 "excerpt": "There is a particular kind of stillness that lives in the first light of day.",
                 "tags": ["morning", "reflection", "ritual"],
                 "visibility": "public",
+                "media": [],
+                "layout": "single",
+                "is_explicit": False,
+                "is_18_plus": False,
                 "comment_count": 0,
+                "likes_count": 0,
+                "views_count": 0,
                 "created_at": iso(now_utc()),
                 "updated_at": iso(now_utc()),
             },
@@ -1004,7 +1150,13 @@ async def startup():
                 "excerpt": "The window fogs in slow circles. Tea cools faster than I read.",
                 "tags": ["weather", "writing"],
                 "visibility": "public",
+                "media": [],
+                "layout": "single",
+                "is_explicit": False,
+                "is_18_plus": False,
                 "comment_count": 0,
+                "likes_count": 0,
+                "views_count": 0,
                 "created_at": iso(now_utc()),
                 "updated_at": iso(now_utc()),
             },
