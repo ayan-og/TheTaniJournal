@@ -1,0 +1,57 @@
+name: Vercel Preview Deploy (PR)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  vercel-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Deploy Frontend to Vercel (preview)
+        id: frontend
+        uses: amondnet/vercel-action@v20
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-args: ''
+          working-directory: frontend
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND }}
+
+      - name: Deploy Backend to Vercel (preview)
+        id: backend
+        uses: amondnet/vercel-action@v20
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-args: ''
+          working-directory: backend
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_BACKEND }}
+
+      - name: Comment on PR with preview URLs
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const frontendUrl = process.env.FRONTEND_URL || steps.frontend.outputs.vercel_url || steps.frontend.outputs.url || '';
+            const backendUrl = process.env.BACKEND_URL || steps.backend.outputs.vercel_url || steps.backend.outputs.url || '';
+            const body = `Vercel preview deployments:\n- Frontend: ${frontendUrl}\n- Backend: ${backendUrl}`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+        env:
+          FRONTEND_URL: ${{ steps.frontend.outputs.vercel_url || '' }}
+          BACKEND_URL: ${{ steps.backend.outputs.vercel_url || '' }}
