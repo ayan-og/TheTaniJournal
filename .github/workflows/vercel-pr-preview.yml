@@ -39,19 +39,53 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_BACKEND }}
 
       - name: Comment on PR with preview URLs
+        run: echo "Deprecated: PR comment step removed"
+
+      - name: Resolve deployment URLs
+        id: resolve
+        run: |
+          apt-get update && apt-get install -y jq curl >/dev/null
+          echo "Resolving frontend deployment URL..."
+          frontend_url="${{ steps.frontend.outputs.vercel_url }}"
+          if [ -z "$frontend_url" ] || [ "$frontend_url" = "null" ]; then
+            frontend_url=$(curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v6/deployments?projectId=${VERCEL_PROJECT_ID_FRONTEND}&limit=1" | jq -r '.deployments[0].url')
+          fi
+          echo "Resolving backend deployment URL..."
+          backend_url="${{ steps.backend.outputs.vercel_url }}"
+          if [ -z "$backend_url" ] || [ "$backend_url" = "null" ]; then
+            backend_url=$(curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v6/deployments?projectId=${VERCEL_PROJECT_ID_BACKEND}&limit=1" | jq -r '.deployments[0].url')
+          fi
+          echo "frontend_url=$frontend_url" >> $GITHUB_OUTPUT
+          echo "backend_url=$backend_url" >> $GITHUB_OUTPUT
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID_FRONTEND: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND }}
+          VERCEL_PROJECT_ID_BACKEND: ${{ secrets.VERCEL_PROJECT_ID_BACKEND }}
+
+      - name: Publish GitHub Check Run with deployment links
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const frontendUrl = process.env.FRONTEND_URL || steps.frontend.outputs.vercel_url || steps.frontend.outputs.url || '';
-            const backendUrl = process.env.BACKEND_URL || steps.backend.outputs.vercel_url || steps.backend.outputs.url || '';
-            const body = `Vercel preview deployments:\n- Frontend: ${frontendUrl}\n- Backend: ${backendUrl}`;
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
+            const frontendUrl = process.env.FRONTEND_URL || '';
+            const backendUrl = process.env.BACKEND_URL || '';
+            const head_sha = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
+            const summaryLines = [];
+            if (frontendUrl) summaryLines.push(`- Frontend: ${frontendUrl}`);
+            if (backendUrl) summaryLines.push(`- Backend: ${backendUrl}`);
+            const summary = summaryLines.length ? summaryLines.join('\n') : 'No deployment URLs found.';
+            await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body,
+              name: 'Vercel Preview Deployments',
+              head_sha: head_sha,
+              status: 'completed',
+              conclusion: 'success',
+              output: {
+                title: 'Vercel Preview Deployments',
+                summary: summary,
+              },
             });
         env:
-          FRONTEND_URL: ${{ steps.frontend.outputs.vercel_url || '' }}
-          BACKEND_URL: ${{ steps.backend.outputs.vercel_url || '' }}
+          FRONTEND_URL: ${{ steps.resolve.outputs.frontend_url }}
+          BACKEND_URL: ${{ steps.resolve.outputs.backend_url }}
